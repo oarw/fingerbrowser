@@ -5,6 +5,7 @@ const api = {
   saveProfile: (profile) => ipcRenderer.invoke('profiles:save', profile),
   deleteProfile: (id) => ipcRenderer.invoke('profiles:delete', id),
   launchProfile: (id) => ipcRenderer.invoke('profiles:launch', id),
+  launchBatch: (ids, tile) => ipcRenderer.invoke('profiles:launch-batch', ids, tile),
   stopProfile: (id) => ipcRenderer.invoke('profiles:stop', id),
   getRunning: () => ipcRenderer.invoke('profiles:running'),
   onRunningChanged: (cb) => {
@@ -19,6 +20,7 @@ const api = {
   randomFingerprint: () => ipcRenderer.invoke('fingerprint:random'),
   randomSeed: () => ipcRenderer.invoke('fingerprint:random-seed'),
   fingerprintOptions: () => ipcRenderer.invoke('fingerprint:options'),
+  detectGeo: (proxy) => ipcRenderer.invoke('geo:detect', proxy),
 
   pickKernel: () => ipcRenderer.invoke('dialog:pick-kernel')
 }

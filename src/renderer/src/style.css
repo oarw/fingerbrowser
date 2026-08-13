@@ -127,6 +127,26 @@ label {
   width: 240px;
 }
 
+.subbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 20px;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-elev-2);
+}
+.subbar .sel-count {
+  color: var(--text-dim);
+  font-size: 12px;
+  margin-right: 4px;
+}
+
+.card-check {
+  width: auto;
+  accent-color: var(--accent);
+  cursor: pointer;
+}
+
 .content {
   flex: 1;
   overflow: auto;

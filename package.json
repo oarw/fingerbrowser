@@ -13,6 +13,8 @@
     "dist": "electron-vite build && electron-builder"
   },
   "dependencies": {
+    "proxy-chain": "^2.5.9",
+    "undici": "^7.10.0",
     "uuid": "^11.1.0"
   },
   "devDependencies": {

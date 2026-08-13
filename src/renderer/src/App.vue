@@ -12,6 +12,9 @@ const showEditor = ref(false)
 const editing = ref(null)
 const showSettings = ref(false)
 
+const selected = ref([])
+const batchBusy = ref(false)
+
 let unsub = null
 
 onMounted(async () => {
@@ -85,6 +88,37 @@ async function stop(p) {
 function tagsOf(p) {
   return Array.isArray(p.tags) ? p.tags : []
 }
+
+function isSelected(id) {
+  return selected.value.includes(id)
+}
+function toggleSelect(id) {
+  const i = selected.value.indexOf(id)
+  if (i >= 0) selected.value.splice(i, 1)
+  else selected.value.push(id)
+}
+function selectAllFiltered() {
+  selected.value = filtered.value.map((p) => p.id)
+}
+function clearSel() {
+  selected.value = []
+}
+
+async function batchLaunch(tile) {
+  const ids = selected.value.filter((id) => !isRunning(id))
+  if (!ids.length) {
+    alert('请先勾选未运行的环境')
+    return
+  }
+  batchBusy.value = true
+  try {
+    const res = await window.api.launchBatch(ids, tile)
+    const fails = res.filter((r) => !r.ok)
+    if (fails.length) alert('部分环境启动失败:\n' + fails.map((f) => f.error).join('\n'))
+  } finally {
+    batchBusy.value = false
+  }
+}
 </script>
 
 <template>
@@ -97,10 +131,29 @@ function tagsOf(p) {
       <button class="btn-primary" @click="openCreate">+ 新建环境</button>
     </div>
 
+    <div v-if="profiles.length" class="subbar">
+      <span class="sel-count">已选 {{ selected.length }} 个</span>
+      <button class="btn-ghost" @click="selectAllFiltered">全选</button>
+      <button class="btn-ghost" @click="clearSel">清空</button>
+      <div class="spacer" style="flex: 1"></div>
+      <button class="btn-ghost" :disabled="batchBusy || !selected.length" @click="batchLaunch(false)">
+        批量启动
+      </button>
+      <button class="btn-primary" :disabled="batchBusy || !selected.length" @click="batchLaunch(true)">
+        平铺启动
+      </button>
+    </div>
+
     <div class="content">
       <div v-if="filtered.length" class="grid">
         <div v-for="p in filtered" :key="p.id" class="card">
           <div class="row">
+            <input
+              type="checkbox"
+              class="card-check"
+              :checked="isSelected(p.id)"
+              @change="toggleSelect(p.id)"
+            />
             <span class="dot" :class="isRunning(p.id) ? 'running' : 'stopped'"></span>
             <span class="name">{{ p.name }}</span>
             <div class="spacer" style="flex: 1"></div>

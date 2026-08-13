@@ -2,12 +2,15 @@
 import { spawn } from 'node:child_process'
 import { existsSync, mkdirSync } from 'node:fs'
 import { profileDataDir } from './store.js'
+import { needsBridge, startBridge, stopBridge, stopAllBridges } from './proxyBridge.js'
 
 // 记录正在运行的进程:profileId -> ChildProcess
 const running = new Map()
 
-// 把环境配置翻译成内核命令行参数
-export function buildArgs(profile, userDataDir) {
+// 把环境配置翻译成内核命令行参数。
+// proxyServerUrl:若走本地桥接,这里传入本地代理 url;否则为空,使用环境自身代理。
+// windowBounds:可选窗口位置/大小(用于平铺)。
+export function buildArgs(profile, userDataDir, proxyServerUrl, windowBounds) {
   const fp = profile.fingerprint || {}
   const args = [
     `--user-data-dir=${userDataDir}`,
@@ -32,12 +35,19 @@ export function buildArgs(profile, userDataDir) {
     args.push('--disable-non-proxied-udp')
   }
 
-  // 代理:注意 fingerprint-chromium 的 --proxy-server 不支持账号密码认证,
-  // 带认证的代理需要本地桥接(后续阶段实现),这里仅处理无认证代理。
+  // 代理:优先使用桥接后的本地代理;否则用环境自身的无认证代理
   const proxy = profile.proxy
-  if (proxy && proxy.enabled && proxy.host && proxy.port) {
+  if (proxyServerUrl) {
+    args.push(`--proxy-server=${proxyServerUrl}`)
+  } else if (proxy && proxy.enabled && proxy.host && proxy.port) {
     const scheme = proxy.type === 'socks5' ? 'socks5' : 'http'
     args.push(`--proxy-server=${scheme}://${proxy.host}:${proxy.port}`)
+  }
+
+  // 窗口平铺
+  if (windowBounds) {
+    args.push(`--window-position=${windowBounds.x},${windowBounds.y}`)
+    args.push(`--window-size=${windowBounds.width},${windowBounds.height}`)
   }
 
   // 起始页
@@ -55,7 +65,7 @@ export function runningIds() {
 }
 
 // 启动一个环境;onExit(id) 在进程退出时回调,用于通知渲染进程刷新状态
-export function launch(profile, kernelPath, onExit) {
+export async function launch(profile, kernelPath, onExit, windowBounds) {
   if (!kernelPath || !existsSync(kernelPath)) {
     throw new Error('内核路径未设置或文件不存在,请在“设置”中指定 fingerprint-chromium 的 chrome(.exe) 路径')
   }
@@ -66,27 +76,35 @@ export function launch(profile, kernelPath, onExit) {
   const userDataDir = profileDataDir(profile.id)
   if (!existsSync(userDataDir)) mkdirSync(userDataDir, { recursive: true })
 
-  const args = buildArgs(profile, userDataDir)
-  const child = spawn(kernelPath, args, {
-    detached: false,
-    stdio: 'ignore'
-  })
+  // 带认证 / SOCKS5 代理走本地桥接
+  let proxyServerUrl = ''
+  if (needsBridge(profile.proxy)) {
+    proxyServerUrl = await startBridge(profile.id, profile.proxy)
+  }
+
+  const args = buildArgs(profile, userDataDir, proxyServerUrl, windowBounds)
+  let child
+  try {
+    child = spawn(kernelPath, args, { detached: false, stdio: 'ignore' })
+  } catch (e) {
+    await stopBridge(profile.id)
+    throw e
+  }
 
   running.set(profile.id, child)
 
-  child.on('exit', () => {
+  const cleanup = async () => {
     running.delete(profile.id)
+    await stopBridge(profile.id)
     if (onExit) onExit(profile.id)
-  })
-  child.on('error', () => {
-    running.delete(profile.id)
-    if (onExit) onExit(profile.id)
-  })
+  }
+  child.on('exit', cleanup)
+  child.on('error', cleanup)
 
   return { pid: child.pid, args }
 }
 
-export function stop(id) {
+export async function stop(id) {
   const child = running.get(id)
   if (!child) return false
   try {
@@ -95,10 +113,11 @@ export function stop(id) {
     // ignore
   }
   running.delete(id)
+  await stopBridge(id)
   return true
 }
 
-export function stopAll() {
+export async function stopAll() {
   for (const [, child] of running) {
     try {
       child.kill()
@@ -107,4 +126,5 @@ export function stopAll() {
     }
   }
   running.clear()
+  await stopAllBridges()
 }

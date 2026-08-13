@@ -74,6 +74,24 @@ function applyLocale(loc) {
   form.fingerprint.timezone = loc.timezone
 }
 
+const geoLoading = ref(false)
+const geoInfo = ref('')
+async function detectGeo() {
+  geoLoading.value = true
+  geoInfo.value = ''
+  try {
+    const g = await window.api.detectGeo(JSON.parse(JSON.stringify(form.proxy)))
+    form.fingerprint.timezone = g.timezone
+    form.fingerprint.language = g.language
+    form.fingerprint.acceptLanguages = g.acceptLanguages
+    geoInfo.value = `出口 IP ${g.ip} · ${g.country} · ${g.timezone}`
+  } catch (e) {
+    geoInfo.value = '查询失败:' + (e.message || String(e))
+  } finally {
+    geoLoading.value = false
+  }
+}
+
 function submit() {
   if (!form.name.trim()) {
     alert('请填写环境名称')
@@ -174,7 +192,13 @@ function submit() {
           </div>
           <div class="full">
             <label>时区</label>
-            <input v-model="form.fingerprint.timezone" placeholder="America/New_York" />
+            <div class="inline">
+              <input v-model="form.fingerprint.timezone" placeholder="America/New_York" />
+              <button class="btn-ghost" type="button" :disabled="geoLoading" @click="detectGeo">
+                {{ geoLoading ? '查询中…' : '按代理 IP 填充' }}
+              </button>
+            </div>
+            <div v-if="geoInfo" class="hint" style="margin-top: 6px">{{ geoInfo }}</div>
           </div>
           <div class="full">
             <label>快速套用地区(语言 + 时区)</label>
@@ -214,15 +238,15 @@ function submit() {
             </div>
             <div></div>
             <div>
-              <label>用户名(暂不生效)</label>
+              <label>用户名</label>
               <input v-model="form.proxy.username" />
             </div>
             <div>
-              <label>密码(暂不生效)</label>
+              <label>密码</label>
               <input v-model="form.proxy.password" type="password" />
             </div>
             <div class="full hint">
-              注意:内核的 --proxy-server 暂不支持账号密码认证,带认证的代理将在后续版本通过本地桥接支持。
+              带账号密码的代理或 SOCKS5 会自动经本地桥接转发(浏览器只连 127.0.0.1,凭据不外泄)。
             </div>
           </template>
         </div>
