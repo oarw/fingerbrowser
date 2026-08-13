@@ -14,8 +14,7 @@
   },
   "dependencies": {
     "proxy-chain": "^2.5.9",
-    "undici": "^7.10.0",
-    "uuid": "^11.1.0"
+    "undici": "^7.10.0"
   },
   "devDependencies": {
     "@vitejs/plugin-vue": "^5.2.1",

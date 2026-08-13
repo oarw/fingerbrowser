@@ -14,14 +14,20 @@ const showSettings = ref(false)
 
 const selected = ref([])
 const batchBusy = ref(false)
+const runningSet = computed(() => new Set(running.value))
 
 let unsub = null
 
 onMounted(async () => {
-  options.value = await window.api.fingerprintOptions()
-  await refresh()
-  running.value = await window.api.getRunning()
   unsub = window.api.onRunningChanged((ids) => (running.value = ids))
+  const [nextOptions, nextProfiles, nextRunning] = await Promise.all([
+    window.api.fingerprintOptions(),
+    window.api.listProfiles(),
+    window.api.getRunning()
+  ])
+  options.value = nextOptions
+  profiles.value = nextProfiles
+  running.value = nextRunning
 })
 
 onUnmounted(() => {
@@ -45,7 +51,7 @@ const filtered = computed(() => {
 })
 
 function isRunning(id) {
-  return running.value.includes(id)
+  return runningSet.value.has(id)
 }
 
 function openCreate() {

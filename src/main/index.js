@@ -2,15 +2,29 @@ import { app, shell, BrowserWindow, ipcMain, dialog, screen } from 'electron'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { dirname } from 'node:path'
-import { v4 as uuidv4 } from 'uuid'
+import { randomUUID } from 'node:crypto'
 import { loadProfiles, saveProfiles, loadSettings, saveSettings } from './store.js'
 import { launch, stop, stopAll, runningIds } from './launcher.js'
 import { randomFingerprint, randomSeed, OPTIONS } from './fingerprint.js'
-import { detectGeo } from './geo.js'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 
 let mainWindow = null
+let runningNotifyTimer = null
+let lastRunningSignature = ''
+let shutdownPromise = null
+let isQuitting = false
+
+const gotSingleInstanceLock = app.requestSingleInstanceLock()
+
+function shutdown() {
+  if (!shutdownPromise) {
+    shutdownPromise = stopAll().finally(() => {
+      shutdownPromise = null
+    })
+  }
+  return shutdownPromise
+}
 
 function createWindow() {
   mainWindow = new BrowserWindow({
@@ -23,14 +37,25 @@ function createWindow() {
     backgroundColor: '#0f1115',
     webPreferences: {
       preload: join(__dirname, '../preload/index.js'),
-      sandbox: false
+      nodeIntegration: false,
+      contextIsolation: true,
+      // 当前 preload 使用 ESM + externalizeDepsPlugin，迁移到 sandbox 需要先改为单 bundle。
+      sandbox: false,
+      spellcheck: false,
+      enableWebSQL: false,
+      v8CacheOptions: 'bypassHeatCheck'
     }
   })
 
   mainWindow.on('ready-to-show', () => mainWindow.show())
+  mainWindow.on('closed', () => {
+    mainWindow = null
+  })
+
+  mainWindow.webContents.on('will-navigate', (event) => event.preventDefault())
 
   mainWindow.webContents.setWindowOpenHandler((details) => {
-    shell.openExternal(details.url)
+    if (details.url.startsWith('https://')) void shell.openExternal(details.url)
     return { action: 'deny' }
   })
 
@@ -42,29 +67,56 @@ function createWindow() {
 }
 
 function notifyRunning() {
-  if (mainWindow && !mainWindow.isDestroyed()) {
-    mainWindow.webContents.send('profiles:running-changed', runningIds())
-  }
+  if (!mainWindow || mainWindow.isDestroyed() || mainWindow.webContents.isDestroyed()) return
+  const ids = runningIds()
+  const signature = ids.join('\u0000')
+  if (signature === lastRunningSignature) return
+  lastRunningSignature = signature
+  mainWindow.webContents.send('profiles:running-changed', ids)
 }
 
-app.whenReady().then(() => {
-  registerIpc()
-  createWindow()
-
-  app.on('activate', () => {
-    if (BrowserWindow.getAllWindows().length === 0) createWindow()
+function scheduleRunningNotify() {
+  if (runningNotifyTimer) return
+  runningNotifyTimer = setImmediate(() => {
+    runningNotifyTimer = null
+    notifyRunning()
   })
-})
+}
+
+if (!gotSingleInstanceLock) {
+  app.quit()
+} else {
+  app.on('second-instance', () => {
+    if (!mainWindow || mainWindow.isDestroyed()) return
+    if (mainWindow.isMinimized()) mainWindow.restore()
+    mainWindow.show()
+    mainWindow.focus()
+  })
+
+  app.whenReady().then(() => {
+    registerIpc()
+    createWindow()
+
+    app.on('activate', () => {
+      if (BrowserWindow.getAllWindows().length === 0) createWindow()
+    })
+  })
+}
 
 app.on('window-all-closed', () => {
-  stopAll()
   if (process.platform !== 'darwin') app.quit()
 })
 
-app.on('before-quit', () => stopAll())
+app.on('before-quit', (event) => {
+  if (isQuitting) return
+  isQuitting = true
+  event.preventDefault()
+  void shutdown().finally(() => app.quit())
+})
 
 // 计算平铺网格:根据数量与可用工作区,返回每个窗口的位置与大小
 function computeGrid(count) {
+  if (count <= 0) return []
   const { workArea } = screen.getPrimaryDisplay()
   const cols = Math.ceil(Math.sqrt(count))
   const rows = Math.ceil(count / cols)
@@ -84,13 +136,13 @@ function computeGrid(count) {
   return bounds
 }
 
-const delay = (ms) => new Promise((r) => setTimeout(r, ms))
+const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
 
 function registerIpc() {
   ipcMain.handle('profiles:list', () => loadProfiles())
 
-  ipcMain.handle('profiles:save', (_e, profile) => {
-    const profiles = loadProfiles()
+  ipcMain.handle('profiles:save', async (_e, profile) => {
+    const profiles = await loadProfiles()
     const now = Date.now()
     if (profile.id) {
       const idx = profiles.findIndex((p) => p.id === profile.id)
@@ -100,51 +152,66 @@ function registerIpc() {
         profiles.push({ ...profile, updatedAt: now, createdAt: now })
       }
     } else {
-      profile.id = uuidv4()
+      profile.id = randomUUID()
       profile.createdAt = now
       profile.updatedAt = now
       profiles.push(profile)
     }
-    saveProfiles(profiles)
+    await saveProfiles(profiles)
     return profile
   })
 
-  ipcMain.handle('profiles:delete', (_e, id) => {
-    const profiles = loadProfiles().filter((p) => p.id !== id)
-    saveProfiles(profiles)
+  ipcMain.handle('profiles:delete', async (_e, id) => {
+    const profiles = (await loadProfiles()).filter((p) => p.id !== id)
+    await saveProfiles(profiles)
     return true
   })
 
   ipcMain.handle('profiles:launch', async (_e, id) => {
-    const profile = loadProfiles().find((p) => p.id === id)
+    const profile = (await loadProfiles()).find((p) => p.id === id)
     if (!profile) throw new Error('环境不存在')
-    const settings = loadSettings()
-    const result = await launch(profile, settings.kernelPath, () => notifyRunning())
+    const settings = await loadSettings()
+    const result = await launch(profile, settings.kernelPath, () => scheduleRunningNotify())
     notifyRunning()
     return result
   })
 
   // 批量启动;tile=true 时按网格平铺窗口
   ipcMain.handle('profiles:launch-batch', async (_e, ids, tile) => {
-    const all = loadProfiles()
-    const settings = loadSettings()
-    const targets = ids
-      .map((id) => all.find((p) => p.id === id))
+    const [all, settings] = await Promise.all([loadProfiles(), loadSettings()])
+    const runningSet = new Set(runningIds())
+    const profileById = new Map(all.map((profile) => [profile.id, profile]))
+    const targets = [...new Set(Array.isArray(ids) ? ids : [])]
+      .map((id) => profileById.get(id))
       .filter(Boolean)
-      .filter((p) => !runningIds().includes(p.id))
+      .filter((p) => !runningSet.has(p.id))
 
     const bounds = tile ? computeGrid(targets.length) : []
-    const results = []
-    for (let i = 0; i < targets.length; i++) {
-      try {
-        await launch(targets[i], settings.kernelPath, () => notifyRunning(), tile ? bounds[i] : undefined)
-        results.push({ id: targets[i].id, ok: true })
-      } catch (e) {
-        results.push({ id: targets[i].id, ok: false, error: e.message || String(e) })
+    const results = Array(targets.length)
+    let nextIndex = 0
+    const workerCount = Math.min(2, targets.length)
+    const worker = async () => {
+      while (true) {
+        const i = nextIndex++
+        if (i >= targets.length) return
+        try {
+          await launch(
+            targets[i],
+            settings.kernelPath,
+            () => scheduleRunningNotify(),
+            tile ? bounds[i] : undefined
+          )
+          results[i] = { id: targets[i].id, ok: true }
+        } catch (e) {
+          results[i] = { id: targets[i].id, ok: false, error: e.message || String(e) }
+        }
+        scheduleRunningNotify()
+        // 两路并发 + 短间隔，减少 CPU/磁盘尖峰，同时显著快于原先的单路 400ms。
+        if (nextIndex < targets.length) await delay(250)
       }
-      notifyRunning()
-      await delay(400) // 错开启动,避免瞬时资源争用
     }
+    await Promise.all(Array.from({ length: workerCount }, worker))
+    notifyRunning()
     return results
   })
 
@@ -157,8 +224,8 @@ function registerIpc() {
   ipcMain.handle('profiles:running', () => runningIds())
 
   ipcMain.handle('settings:get', () => loadSettings())
-  ipcMain.handle('settings:set', (_e, settings) => {
-    saveSettings(settings)
+  ipcMain.handle('settings:set', async (_e, settings) => {
+    await saveSettings(settings)
     return loadSettings()
   })
 
@@ -166,7 +233,10 @@ function registerIpc() {
   ipcMain.handle('fingerprint:random-seed', () => randomSeed())
   ipcMain.handle('fingerprint:options', () => OPTIONS)
 
-  ipcMain.handle('geo:detect', (_e, proxy) => detectGeo(proxy))
+  ipcMain.handle('geo:detect', async (_e, proxy) => {
+    const { detectGeo } = await import('./geo.js')
+    return detectGeo(proxy)
+  })
 
   ipcMain.handle('dialog:pick-kernel', async () => {
     const result = await dialog.showOpenDialog(mainWindow, {

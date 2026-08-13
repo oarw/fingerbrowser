@@ -6,7 +6,7 @@
 
 一个**自研指纹浏览器管理器**,用来替代臃肿、有广告和限制的商业指纹浏览器(如 RoxyBrowser)。
 
-它自己**不做指纹伪装**,而是负责"多环境管理 + 隔离 + 启动";真正的指纹伪装交给一个**内核级指纹 Chromium**(外部程序,单独下载)。这样能拿到接近商业产品的反检测能力,而我们只维护"管理器"这层。
+它自己目前负责"多环境管理 + 隔离 + 启动";暂时指纹伪装交给一个**内核级指纹 Chromium**(外部程序,单独下载)。这样能拿到接近商业产品的反检测能力,而我们只维护"管理器"这层。注意，后续可能自己研究相关指纹伪装等等功能。
 
 - 仓库:`https://github.com/oarw/fingerbrowser`(私有)
 - 技术栈:Electron + Vue 3 + Vite(经由 electron-vite)
@@ -204,3 +204,15 @@ gh repo edit oarw/fingerbrowser --visibility private --accept-visibility-change-
 2. 读 `launcher.js`(参数如何拼)、`proxyBridge.js`(代理如何转)、`App.vue`(界面如何驱动 IPC)——三个文件覆盖 80% 逻辑。
 3. 改代码 → 转公开 → push → 看 CI 绿 → 转私有。
 4. 需求排期见 `docs/PLAN.md`。
+
+## 13. 运行时优化说明
+
+当前管理器的运行优化集中在主进程和外部 Chromium 生命周期:
+
+- 启动器使用 `launching` 防重入,批量启动最多 2 路并发并保留 250ms 错峰,避免 CPU/磁盘瞬时峰值。
+- Windows 关闭环境时用 `taskkill /t` 递归结束 Chromium 子进程树,并在退出前等待代理桥接清理完成。
+- 运行态 IPC 通知合并且去重,避免批量启动时重复触发渲染层刷新。
+- 配置 JSON 使用内存缓存和串行异步写队列,不再用同步文件 I/O 阻塞主进程事件循环。
+- `proxy-chain` 和地理查询按需加载;首屏 IPC 请求并发执行;UUID 使用 Node 原生 `randomUUID`。
+
+窗口已启用 `contextIsolation`、关闭 `nodeIntegration`,并使用 V8 代码缓存。预加载仍暂时设置 `sandbox:false`,因为当前 ESM 预加载依赖外部化构建;迁移到 Electron sandbox 时需要先将 preload 改为单 bundle,再在 CI 做完整构建验证。

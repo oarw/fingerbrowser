@@ -1,6 +1,5 @@
 // 按代理出口 IP 查询地理信息,用于自动填充时区 / 语言。
 // 通过(临时匿名的)代理请求 ip-api.com,拿到的即是代理出口的地理位置。
-import { anonymizeProxy, closeAnonymizedProxy } from 'proxy-chain'
 import { request, ProxyAgent } from 'undici'
 import { buildUpstreamUrl } from './proxyBridge.js'
 
@@ -25,6 +24,7 @@ export async function detectGeo(proxy) {
   let dispatcher
   try {
     if (proxy && proxy.enabled && proxy.host && proxy.port) {
+      const { anonymizeProxy } = await import('proxy-chain')
       localUrl = await anonymizeProxy(buildUpstreamUrl(proxy))
       dispatcher = new ProxyAgent(localUrl)
     }
@@ -49,8 +49,16 @@ export async function detectGeo(proxy) {
       acceptLanguages: `${lang},${lang.split('-')[0]}`
     }
   } finally {
+    if (dispatcher) {
+      try {
+        await dispatcher.close()
+      } catch {
+        // ignore
+      }
+    }
     if (localUrl) {
       try {
+        const { closeAnonymizedProxy } = await import('proxy-chain')
         await closeAnonymizedProxy(localUrl, true)
       } catch {
         // ignore
