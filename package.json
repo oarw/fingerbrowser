@@ -1,6 +1,6 @@
 {
   "name": "fingerbrowser",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "自研指纹浏览器管理器 - 基于内核级指纹 Chromium 的多环境管理工具",
   "author": "",
   "license": "MIT",
@@ -9,10 +9,12 @@
   "scripts": {
     "dev": "electron-vite dev",
     "build": "electron-vite build",
+    "test": "node --test",
     "start": "electron-vite preview",
     "dist": "electron-vite build && electron-builder"
   },
   "dependencies": {
+    "lucide-vue-next": "^1.0.0",
     "proxy-chain": "^2.5.9",
     "undici": "^7.10.0"
   },

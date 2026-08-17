@@ -18,18 +18,58 @@ jobs:
     timeout-minutes: 30
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Setup Node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v7
         with:
           node-version: 22
 
       - name: Install dependencies
         run: npm install --no-audit --no-fund
 
+      - name: Run unit tests
+        run: npm test
+
+      - name: Verify managed fingerprint kernel
+        shell: pwsh
+        run: |
+          $kernelUrl = 'https://github.com/adryfish/fingerprint-chromium/releases/download/148.0.7778.215/ungoogled-chromium_148.0.7778.215-1.1_windows_x64.zip'
+          $expectedHash = '9ef3f471b7a6641b4224532522b29141ce3746e27d55788d88e2fd951f362579'
+          $archive = Join-Path $env:RUNNER_TEMP 'fingerprint-chromium.zip'
+          $destination = Join-Path $env:RUNNER_TEMP 'fingerprint-chromium'
+
+          Invoke-WebRequest -Uri $kernelUrl -OutFile $archive
+          $actualHash = (Get-FileHash -LiteralPath $archive -Algorithm SHA256).Hash.ToLowerInvariant()
+          if ($actualHash -ne $expectedHash) {
+            throw "Fingerprint kernel checksum mismatch: $actualHash"
+          }
+
+          Expand-Archive -LiteralPath $archive -DestinationPath $destination -Force
+          $chrome = Get-ChildItem -LiteralPath $destination -Recurse -File -Filter chrome.exe | Select-Object -First 1
+          if (-not $chrome) { throw 'Fingerprint kernel archive does not contain chrome.exe' }
+
       - name: Build application
         run: npm run build
+
+      - name: Smoke test Electron startup
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Path artifacts -Force | Out-Null
+          $env:FINGERBROWSER_SMOKE_TEST = '1'
+          $env:FINGERBROWSER_SMOKE_SCREENSHOT = (Join-Path $PWD 'artifacts/ui-smoke.png')
+          npx electron .
+          if ($LASTEXITCODE -ne 0) { throw "Electron smoke test exited with $LASTEXITCODE" }
+          if (-not (Test-Path -LiteralPath $env:FINGERBROWSER_SMOKE_SCREENSHOT)) {
+            throw 'Electron smoke test did not create a screenshot'
+          }
+
+      - name: Upload smoke screenshot
+        uses: actions/upload-artifact@v7
+        with:
+          name: ui-smoke-${{ github.ref_name }}
+          path: artifacts/ui-smoke.png
+          retention-days: 7
 
       - name: Package Windows application
         run: npx electron-builder --win --publish never
@@ -67,7 +107,9 @@ jobs:
           $notes = @"
           FingerBrowser $env:GITHUB_REF_NAME Windows release.
 
-          - The fingerprint Chromium kernel is not bundled. Select a compatible Chromium executable in Settings before first use.
+          - The fingerprint Chromium binary is not bundled in the installer. The app can download, verify, and install the pinned official build from Settings.
+          - Profile notes are visible and editable from the main environment table.
+          - The profile manager and editor now use a compact operations-focused layout without ads or commercial surfaces.
           - The installer is not code-signed yet, so Windows SmartScreen may show an unknown publisher warning.
           - This is an MVP release without automated fingerprint-consistency guarantees.
           "@

@@ -3,9 +3,11 @@ import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { dirname } from 'node:path'
 import { randomUUID } from 'node:crypto'
+import { writeFile } from 'node:fs/promises'
 import { loadProfiles, saveProfiles, loadSettings, saveSettings } from './store.js'
 import { launch, stop, stopAll, runningIds } from './launcher.js'
 import { randomFingerprint, randomSeed, OPTIONS } from './fingerprint.js'
+import { KernelManager, MANAGED_KERNEL } from './kernelManager.js'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 
@@ -14,12 +16,13 @@ let runningNotifyTimer = null
 let lastRunningSignature = ''
 let shutdownPromise = null
 let isQuitting = false
+let kernelManager = null
 
 const gotSingleInstanceLock = app.requestSingleInstanceLock()
 
 function shutdown() {
   if (!shutdownPromise) {
-    shutdownPromise = stopAll().finally(() => {
+    shutdownPromise = Promise.all([stopAll(), kernelManager?.shutdown()]).finally(() => {
       shutdownPromise = null
     })
   }
@@ -34,7 +37,7 @@ function createWindow() {
     minHeight: 600,
     show: false,
     autoHideMenuBar: true,
-    backgroundColor: '#0f1115',
+    backgroundColor: '#eef3f5',
     webPreferences: {
       preload: join(__dirname, '../preload/index.js'),
       nodeIntegration: false,
@@ -58,6 +61,23 @@ function createWindow() {
     if (details.url.startsWith('https://')) void shell.openExternal(details.url)
     return { action: 'deny' }
   })
+
+  if (process.env.FINGERBROWSER_SMOKE_TEST === '1') {
+    mainWindow.webContents.once('did-finish-load', () => {
+      setTimeout(async () => {
+        try {
+          const image = await mainWindow.webContents.capturePage()
+          const screenshotPath = process.env.FINGERBROWSER_SMOKE_SCREENSHOT
+          if (!screenshotPath) throw new Error('FINGERBROWSER_SMOKE_SCREENSHOT is not set')
+          await writeFile(screenshotPath, image.toPNG())
+          app.exit(0)
+        } catch (error) {
+          console.error('Electron smoke capture failed:', error)
+          app.exit(1)
+        }
+      }, 900)
+    })
+  }
 
   if (process.env['ELECTRON_RENDERER_URL']) {
     mainWindow.loadURL(process.env['ELECTRON_RENDERER_URL'])
@@ -94,6 +114,11 @@ if (!gotSingleInstanceLock) {
   })
 
   app.whenReady().then(() => {
+    kernelManager = new KernelManager(join(app.getPath('userData'), 'kernels'))
+    kernelManager.onProgress((progress) => {
+      if (!mainWindow || mainWindow.isDestroyed() || mainWindow.webContents.isDestroyed()) return
+      mainWindow.webContents.send('kernel:progress', progress)
+    })
     registerIpc()
     createWindow()
 
@@ -171,7 +196,8 @@ function registerIpc() {
     const profile = (await loadProfiles()).find((p) => p.id === id)
     if (!profile) throw new Error('环境不存在')
     const settings = await loadSettings()
-    const result = await launch(profile, settings.kernelPath, () => scheduleRunningNotify())
+    const target = { ...profile, startupUrl: profile.startupUrl || settings.defaultStartupUrl }
+    const result = await launch(target, settings.kernelPath, () => scheduleRunningNotify())
     notifyRunning()
     return result
   })
@@ -196,7 +222,7 @@ function registerIpc() {
         if (i >= targets.length) return
         try {
           await launch(
-            targets[i],
+            { ...targets[i], startupUrl: targets[i].startupUrl || settings.defaultStartupUrl },
             settings.kernelPath,
             () => scheduleRunningNotify(),
             tile ? bounds[i] : undefined
@@ -225,9 +251,29 @@ function registerIpc() {
 
   ipcMain.handle('settings:get', () => loadSettings())
   ipcMain.handle('settings:set', async (_e, settings) => {
-    await saveSettings(settings)
+    await saveSettings({ ...(await loadSettings()), ...settings })
     return loadSettings()
   })
+
+  ipcMain.handle('kernel:status', async () => {
+    const settings = await loadSettings()
+    return kernelManager.getStatus(settings.kernelPath)
+  })
+
+  ipcMain.handle('kernel:install', async () => {
+    const kernelPath = await kernelManager.install()
+    const settings = await loadSettings()
+    await saveSettings({
+      ...settings,
+      kernelPath,
+      managedKernelVersion: MANAGED_KERNEL.version
+    })
+    return kernelManager.getStatus(kernelPath)
+  })
+
+  ipcMain.handle('kernel:cancel', () => kernelManager.cancel())
+  ipcMain.handle('kernel:open-directory', () => shell.openPath(kernelManager.baseDir))
+  ipcMain.handle('kernel:open-source', () => shell.openExternal(MANAGED_KERNEL.sourceUrl))
 
   ipcMain.handle('fingerprint:random', () => randomFingerprint())
   ipcMain.handle('fingerprint:random-seed', () => randomSeed())

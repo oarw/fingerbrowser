@@ -16,6 +16,16 @@ const api = {
 
   getSettings: () => ipcRenderer.invoke('settings:get'),
   setSettings: (settings) => ipcRenderer.invoke('settings:set', settings),
+  getKernelStatus: () => ipcRenderer.invoke('kernel:status'),
+  installKernel: () => ipcRenderer.invoke('kernel:install'),
+  cancelKernelInstall: () => ipcRenderer.invoke('kernel:cancel'),
+  openKernelDirectory: () => ipcRenderer.invoke('kernel:open-directory'),
+  openKernelSource: () => ipcRenderer.invoke('kernel:open-source'),
+  onKernelProgress: (cb) => {
+    const listener = (_e, progress) => cb(progress)
+    ipcRenderer.on('kernel:progress', listener)
+    return () => ipcRenderer.removeListener('kernel:progress', listener)
+  },
 
   randomFingerprint: () => ipcRenderer.invoke('fingerprint:random'),
   randomSeed: () => ipcRenderer.invoke('fingerprint:random-seed'),

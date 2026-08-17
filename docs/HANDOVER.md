@@ -6,7 +6,7 @@
 
 一个**自研指纹浏览器管理器**,用来替代臃肿、有广告和限制的商业指纹浏览器(如 RoxyBrowser)。
 
-它自己目前负责"多环境管理 + 隔离 + 启动";暂时指纹伪装交给一个**内核级指纹 Chromium**(外部程序,单独下载)。这样能拿到接近商业产品的反检测能力,而我们只维护"管理器"这层。注意，后续可能自己研究相关指纹伪装等等功能。
+它负责"内核下载校验 + 多环境管理 + 隔离 + 启动";指纹伪装交给一个**内核级指纹 Chromium**。应用固定官方 Windows ZIP 的版本、大小和 SHA-256,在用户点击后下载并安装;也保留手动内核路径。后续可能研究和维护自己的指纹补丁栈。
 
 - 仓库:`https://github.com/oarw/fingerbrowser`(私有)
 - 技术栈:Electron + Vue 3 + Vite(经由 electron-vite)
@@ -22,7 +22,7 @@
 │  管理器主进程 (Electron main · Node)      │  本仓库
 │  持久化 / 启动引擎 / 代理桥接 / IP 地理    │
 ├─────────────────────────────────────────┤
-│  内核级指纹 Chromium (fingerprint-chromium)│  外部,单独下载
+│  内核级指纹 Chromium (fingerprint-chromium)│  应用内下载,校验后启用
 │  Canvas/WebGL/音频/字体/时区/GPU 伪装      │
 └─────────────────────────────────────────┘
 ```
@@ -47,6 +47,7 @@ fingerbrowser/
    │  ├─ store.js            profiles.json / settings.json 读写、路径定义
    │  ├─ launcher.js         命令行参数拼接、进程启停、运行态 Map、桥接集成
    │  ├─ fingerprint.js      随机指纹/种子生成、可选项(平台/品牌/地区表)
+   │  ├─ kernelManager.js    内核断点下载、SHA-256 校验、解压与原子安装
    │  ├─ proxyBridge.js      本地代理桥接(认证代理 / SOCKS5)
    │  └─ geo.js              按代理 IP 查询地理信息(时区/语言)
    ├─ preload/
@@ -67,7 +68,8 @@ fingerbrowser/
 运行时数据存在 Electron 的 `userData` 目录(Windows:`%APPDATA%\fingerbrowser\`):
 
 - `profiles.json` — 所有环境配置(数组)
-- `settings.json` — 应用设置(`kernelPath`、`defaultStartupUrl`)
+- `settings.json` — 应用设置(`kernelPath`、`managedKernelVersion`、`defaultStartupUrl`)
+- `kernels/` — 应用管理的内核、下载断点与安装元数据
 - `profiles/<环境id>/` — 每个环境独立的浏览器数据目录(Cookie/缓存/存储,物理隔离)
 
 > 删除环境时**不会**删除其 `profiles/<id>/` 目录,避免误删登录态。需要清理时手动删。
@@ -150,6 +152,10 @@ fingerbrowser/
 | `getRunning()` | 当前运行中的环境 id 列表 |
 | `onRunningChanged(cb)` | 订阅运行态变化(返回取消函数) |
 | `getSettings()` / `setSettings(s)` | 读写设置 |
+| `getKernelStatus()` / `installKernel()` | 查询内核状态 / 下载校验并安装固定官方内核 |
+| `cancelKernelInstall()` | 暂停下载,保留断点 |
+| `onKernelProgress(cb)` | 订阅下载、校验、解压和完成状态 |
+| `openKernelDirectory()` / `openKernelSource()` | 打开托管目录 / 固定官方来源 |
 | `randomFingerprint()` / `randomSeed()` | 生成随机指纹/种子 |
 | `fingerprintOptions()` | 下拉可选项(平台/品牌/核心数/地区表) |
 | `detectGeo(proxy)` | 按(代理)出口 IP 查地理信息 |
@@ -166,12 +172,15 @@ npm run build      # 构建 main/preload/renderer 到 out/
 npm run dist       # 构建 + electron-builder 打包到 release/
 ```
 
-- 首次使用应用:打开 → 设置 → 指定 fingerprint-chromium 的 `chrome.exe` 路径 → 新建环境 → 启动。
-- 内核从 https://github.com/adryfish/fingerprint-chromium/releases 下载对应系统版本。
+- 首次使用应用会进入“内核与设置”页;点击“下载并安装”后自动完成下载、校验、解压和路径写入。
+- 当前固定内核:`148.0.7778.215` Windows x64 ZIP,SHA-256 `9ef3f471b7a6641b4224532522b29141ce3746e27d55788d88e2fd951f362579`。
+- 也可手动选择其他兼容内核;托管内核二进制不打进本应用安装包。
 
 ## 10. CI / 发布流程(GitHub Actions)
 
-工作流 `.github/workflows/build.yml`:在 `windows-latest` 上 `npm ci || npm install` → `npm run build` → `npx electron-builder --win` → 上传 `fingerbrowser-windows` 产物(`.exe` + `.zip`)。
+工作流 `.github/workflows/build.yml`:在 `windows-latest` 上安装依赖 → Node 单测 → `npm run build` → 真实启动 Electron 并截取首屏 → `electron-builder --win` → 上传安装包、ZIP 和截图。
+
+工作流 `.github/workflows/release.yml`:推送 `v*` 标签后,先完整下载固定的上游内核并核对 SHA-256/解压结果,再重复单测、冒烟和打包,最后自动创建 Release、上传安装包/ZIP/校验文件。
 
 **私有仓库额度已用尽,所以约定"公开跑 CI、跑完转私有"**(公开仓库 Actions 免费):
 
@@ -190,11 +199,11 @@ gh repo edit oarw/fingerbrowser --visibility private --accept-visibility-change-
 
 ## 11. 已知限制与坑
 
-- **内核不随包分发**:用户需自行下载 fingerprint-chromium 并在设置里指定路径。
+- **内核不随安装包分发**:应用已提供一键下载和校验,但首次使用仍需要约 190 MB 网络下载。这样避免安装包膨胀,也便于独立审计内核来源。
 - **GPU/WebGL 元数据伪装在 Windows 上受限**:内核 README 说明 WebGL 厂商/型号自定义目前主要面向 Linux,Windows 下 GPU 指纹可能有瑕疵(BrowserScan 可能标记)。
 - **地理位置(经纬度)未注入**:目前只填时区/语言;若要伪装 `geolocation`,需通过 CDP 覆盖(阶段三)。
 - **平铺仅在启动时生效**:窗口位置/大小由启动参数决定,启动后未做进程级窗口管理(那需要调用系统窗口 API)。
-- **无自动化测试**:目前 CI 的"构建+打包成功"充当冒烟测试;尚无单测/端到端测试。
+- **测试仍不完整**:已有内核管理单测和真实 Electron 启动截图,但尚无完整渲染交互测试及指纹检测站点回归。
 - **提交作者邮箱是占位符** `oarw@users.noreply.github.com`(未改动全局 git 配置)。如需真实邮箱请告知。
 - 反检测强度参考:该内核 CreepJS 约 51.5%,可过 Cloudflare Turnstile;实际防关联仍强依赖**干净的独立代理 IP**。
 

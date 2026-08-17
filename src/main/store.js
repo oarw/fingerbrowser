@@ -44,6 +44,7 @@ export function saveProfiles(profiles) {
 
 const DEFAULT_SETTINGS = {
   kernelPath: '', // fingerprint-chromium 的 chrome(.exe) 路径
+  managedKernelVersion: '',
   defaultStartupUrl: 'https://browserleaks.com/canvas'
 }
 
