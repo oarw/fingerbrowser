@@ -135,7 +135,7 @@ async function save() {
           <div class="kernel-icon"><HardDriveDownload :size="28" /></div>
           <div class="kernel-details">
             <strong>{{ status.managed?.label || 'Chromium 148 · Windows x64' }}</strong>
-            <span>版本 {{ status.managed?.version || '148.0.7778.215' }} · {{ formatBytes(status.managed?.size) }}</span>
+            <span>版本 {{ status.managed?.version || '148.0.7778.215' }} · {{ formatBytes(status.managed?.size || 189767686) }}</span>
             <small v-if="status.source === 'managed'">内置管理 · {{ status.configuredPath }}</small>
             <small v-else-if="status.source === 'manual'">手动路径 · {{ status.configuredPath }}</small>
             <small v-else>未配置可用内核</small>

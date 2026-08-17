@@ -19,6 +19,60 @@ let kernelManager = null
 
 const gotSingleInstanceLock = app.requestSingleInstanceLock()
 
+const SMOKE_PROFILES = [
+  {
+    id: 'smoke-us',
+    name: 'Amazon-US-01',
+    group: '电商账号',
+    tags: ['美国', '主号'],
+    remark: '已登录,下次检查广告账户',
+    startupUrl: '',
+    fingerprint: {
+      seed: 38410291,
+      platform: 'windows',
+      brand: 'Chrome',
+      hardwareConcurrency: 8,
+      timezone: 'America/New_York',
+      language: 'en-US'
+    },
+    proxy: { enabled: true, type: 'http', host: 'us.proxy.local', port: '8080' }
+  },
+  {
+    id: 'smoke-jp',
+    name: 'TikTok-JP-02',
+    group: '内容账号',
+    tags: ['日本', '待养号'],
+    remark: '完成头像和简介',
+    startupUrl: '',
+    fingerprint: {
+      seed: 91024472,
+      platform: 'windows',
+      brand: 'Chrome',
+      hardwareConcurrency: 4,
+      timezone: 'Asia/Tokyo',
+      language: 'ja-JP'
+    },
+    proxy: { enabled: true, type: 'socks5', host: 'jp.proxy.local', port: '1080' }
+  },
+  {
+    id: 'smoke-cn',
+    name: 'Research-CN',
+    group: '测试环境',
+    tags: ['本机'],
+    remark: '',
+    startupUrl: '',
+    fingerprint: {
+      seed: 72468103,
+      platform: 'windows',
+      brand: 'Edge',
+      hardwareConcurrency: 12,
+      timezone: 'Asia/Shanghai',
+      language: 'zh-CN'
+    },
+    proxy: { enabled: false, type: 'http', host: '', port: '' }
+  }
+]
+
 function shutdown() {
   if (!shutdownPromise) {
     shutdownPromise = Promise.all([stopAll(), kernelManager?.shutdown()]).finally(() => {
@@ -184,7 +238,11 @@ function computeGrid(count) {
 const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
 
 function registerIpc() {
-  ipcMain.handle('profiles:list', () => loadProfiles())
+  ipcMain.handle('profiles:list', async () => {
+    const profiles = await loadProfiles()
+    if (process.env.FINGERBROWSER_SMOKE_TEST === '1' && profiles.length === 0) return SMOKE_PROFILES
+    return profiles
+  })
 
   ipcMain.handle('profiles:save', async (_e, profile) => {
     const profiles = await loadProfiles()

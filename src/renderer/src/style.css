@@ -207,15 +207,15 @@ label {
 .brand {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 8px;
   min-height: 42px;
   padding: 0 7px 18px;
 }
 
 .brand-mark {
   display: grid;
-  width: 34px;
-  height: 34px;
+  width: 32px;
+  height: 32px;
   place-items: center;
   border-radius: var(--radius);
   background: var(--text);
@@ -228,7 +228,7 @@ label {
 .brand-name {
   overflow: hidden;
   font-family: 'Aptos Display', Aptos, 'Microsoft YaHei UI', sans-serif;
-  font-size: 16px;
+  font-size: 15px;
   font-weight: 700;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -542,8 +542,23 @@ label {
 }
 
 .action-column {
+  position: sticky;
+  z-index: 1;
+  right: 0;
   width: 176px;
+  background: var(--surface);
+  box-shadow: -8px 0 12px -12px rgba(26, 46, 56, 0.55);
   text-align: right !important;
+}
+
+.profile-table th.action-column {
+  z-index: 3;
+  background: var(--surface-muted);
+}
+
+.profile-table tbody tr:hover .action-column,
+.profile-table tbody tr.selected .action-column {
+  background: #f5f9fb;
 }
 
 .profile-id {
