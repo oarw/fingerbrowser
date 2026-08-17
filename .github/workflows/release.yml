@@ -1,0 +1,78 @@
+name: release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  release-windows:
+    runs-on: windows-latest
+    timeout-minutes: 30
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Install dependencies
+        run: npm install --no-audit --no-fund
+
+      - name: Build application
+        run: npm run build
+
+      - name: Package Windows application
+        run: npx electron-builder --win --publish never
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Create checksums
+        shell: pwsh
+        run: |
+          $assets = @(Get-ChildItem -LiteralPath release -File | Where-Object {
+            $_.Extension -in @('.exe', '.zip')
+          })
+
+          if ($assets.Count -eq 0) {
+            throw 'electron-builder did not produce any release assets'
+          }
+
+          $checksums = $assets | ForEach-Object {
+            $hash = (Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
+            "$hash  $($_.Name)"
+          }
+
+          $checksums | Set-Content -LiteralPath release/SHA256SUMS.txt -Encoding ascii
+
+      - name: Publish GitHub Release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          $assets = @(Get-ChildItem -LiteralPath release -File | Where-Object {
+            $_.Extension -in @('.exe', '.zip')
+          } | ForEach-Object { $_.FullName })
+          $assets += (Resolve-Path -LiteralPath release/SHA256SUMS.txt).Path
+
+          $notes = @"
+          FingerBrowser $env:GITHUB_REF_NAME Windows release.
+
+          - The fingerprint Chromium kernel is not bundled. Select a compatible Chromium executable in Settings before first use.
+          - The installer is not code-signed yet, so Windows SmartScreen may show an unknown publisher warning.
+          - This is an MVP release without automated fingerprint-consistency guarantees.
+          "@
+
+          gh release create $env:GITHUB_REF_NAME @assets `
+            --verify-tag `
+            --title "FingerBrowser $env:GITHUB_REF_NAME" `
+            --notes $notes
