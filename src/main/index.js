@@ -1,7 +1,6 @@
 import { app, shell, BrowserWindow, ipcMain, dialog, screen } from 'electron'
-import { join } from 'node:path'
+import { dirname, join, parse } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { dirname } from 'node:path'
 import { randomUUID } from 'node:crypto'
 import { writeFile } from 'node:fs/promises'
 import { loadProfiles, saveProfiles, loadSettings, saveSettings } from './store.js'
@@ -66,16 +65,37 @@ function createWindow() {
     mainWindow.webContents.once('did-finish-load', () => {
       setTimeout(async () => {
         try {
-          const image = await mainWindow.webContents.capturePage()
           const screenshotPath = process.env.FINGERBROWSER_SMOKE_SCREENSHOT
           if (!screenshotPath) throw new Error('FINGERBROWSER_SMOKE_SCREENSHOT is not set')
-          await writeFile(screenshotPath, image.toPNG())
+
+          const capture = async (path) => {
+            const image = await mainWindow.webContents.capturePage()
+            await writeFile(path, image.toPNG())
+          }
+          const click = (target) =>
+            mainWindow.webContents.executeJavaScript(
+              `document.querySelector('[data-smoke="${target}"]')?.click()`
+            )
+          const wait = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds))
+          const parsed = parse(screenshotPath)
+
+          await click('profiles')
+          await wait(300)
+          await capture(screenshotPath)
+          await click('settings')
+          await wait(300)
+          await capture(join(parsed.dir, `${parsed.name}-settings${parsed.ext}`))
+          await click('profiles')
+          await wait(100)
+          await click('create')
+          await wait(300)
+          await capture(join(parsed.dir, `${parsed.name}-editor${parsed.ext}`))
           app.exit(0)
         } catch (error) {
           console.error('Electron smoke capture failed:', error)
           app.exit(1)
         }
-      }, 900)
+      }, 1800)
     })
   }
 

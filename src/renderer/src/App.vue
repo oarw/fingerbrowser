@@ -210,11 +210,11 @@ async function settingsSaved(status) {
       </div>
 
       <nav class="primary-nav" aria-label="主导航">
-        <button :class="{ active: activeView === 'profiles' || activeView === 'editor' }" @click="activeView = 'profiles'">
+        <button data-smoke="profiles" :class="{ active: activeView === 'profiles' || activeView === 'editor' }" @click="activeView = 'profiles'">
           <LayoutGrid :size="18" />
           <span>环境管理</span>
         </button>
-        <button :class="{ active: activeView === 'settings' }" @click="openSettings">
+        <button data-smoke="settings" :class="{ active: activeView === 'settings' }" @click="openSettings">
           <FolderCog :size="18" />
           <span>内核与设置</span>
         </button>
@@ -257,7 +257,7 @@ async function settingsSaved(status) {
             <button class="icon-button" title="设置" aria-label="设置" @click="openSettings">
               <Settings :size="18" />
             </button>
-            <button class="btn-primary" @click="openCreate"><Plus :size="17" />新建环境</button>
+            <button class="btn-primary" data-smoke="create" @click="openCreate"><Plus :size="17" />新建环境</button>
           </div>
         </header>
 

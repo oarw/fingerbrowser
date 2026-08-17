@@ -1172,7 +1172,7 @@ label {
   }
 }
 
-@media (max-width: 1020px) {
+@media (max-width: 840px) {
   .app-shell {
     grid-template-columns: 72px minmax(0, 1fr);
   }
