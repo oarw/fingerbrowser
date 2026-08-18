@@ -46,6 +46,7 @@ const DEFAULT_SETTINGS = {
   kernelPath: '', // fingerprint-chromium 的 chrome(.exe) 路径
   kernelDirectory: '', // 空值由主进程解析为软件安装目录下的 kernels
   managedKernelVersion: '',
+  runInBackground: false,
   defaultStartupUrl: 'https://browserleaks.com/canvas'
 }
 

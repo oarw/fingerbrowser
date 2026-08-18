@@ -98,7 +98,7 @@ export async function findChromeExecutable(root) {
 
 async function expandZip(archivePath, destination) {
   const script =
-    '& { param($archive, $destination) Expand-Archive -LiteralPath $archive -DestinationPath $destination -Force }'
+    '& { param($archive, $destination) Add-Type -AssemblyName System.IO.Compression.FileSystem; [System.IO.Compression.ZipFile]::ExtractToDirectory($archive, $destination) }'
   await execFileAsync(
     'powershell.exe',
     [
