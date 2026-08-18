@@ -21,7 +21,7 @@
 └─────────────────────────────────────────┘
 ```
 
-指纹伪装发生在 C++ 内核层(而非 JS 注入),`.toString()` 返回 `[native code]`,可过 CreepJS / BrowserLeaks / Cloudflare Turnstile 等检测。
+指纹参数由 Chromium 内核层处理,不是在网页加载后临时注入 JS。它能减少常见注入痕迹,但不承诺通过所有检测站点;账号关联仍取决于代理出口、系统/时区/语言一致性、使用行为和内核版本等多层因素。
 
 ## 使用
 
@@ -60,13 +60,13 @@ npm run build    # 构建
 npm run dist     # 构建 + electron-builder 打包
 ```
 
-技术栈:Electron + Vue 3 + Vite(electron-vite)。当前支持 Windows,架构预留 macOS / Linux。
+技术栈:Electron + Vue 3 + Vite(electron-vite)。当前仅构建 Windows x64;macOS / Linux 按现阶段范围暂缓。
 
 ## 路线图
 
 - [x] 阶段一 MVP:环境增删改查、独立隔离、指纹参数、一键启动
 - [x] 阶段二:SOCKS5/认证代理本地桥接、按代理 IP 自动填充时区语言、批量启动、窗口平铺
-- [x] 阶段三:内核内置下载/校验、主界面工作台重构、备注快捷管理、CI 启动冒烟
+- [x] 阶段三:内核内置下载/校验、主界面工作台重构、备注快捷管理、品牌图标与启动过渡、CI 启动冒烟
 - [ ] 暂缓:本地 API/CDP-RPA、代理订阅、云同步、自动更新、macOS/Linux
 
 ## 许可

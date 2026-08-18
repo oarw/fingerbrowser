@@ -10,7 +10,7 @@
 
 - 仓库:`https://github.com/oarw/fingerbrowser`(私有)
 - 技术栈:Electron + Vue 3 + Vite(经由 electron-vite)
-- 目标平台:当前 Windows,架构预留 macOS / Linux
+- 目标平台:当前仅构建 Windows x64;macOS / Linux 暂缓
 
 ## 2. 三层架构
 
@@ -27,7 +27,7 @@
 └─────────────────────────────────────────┘
 ```
 
-**关键理念**:指纹伪装发生在 C++ 内核层(不是 JS 注入),所以 `.toString()` 返回 `[native code]`,能过 CreepJS / BrowserLeaks / Cloudflare Turnstile。管理器通过**命令行参数**驱动内核,一个环境 = 一个内核进程 = 一个独立 `--user-data-dir`。
+**关键理念**:指纹参数由 Chromium 内核层处理,不是网页加载后的 JS 注入。这样能减少常见注入痕迹,但不等于承诺通过任意检测站点。管理器通过**命令行参数**驱动内核,一个环境 = 一个内核进程 = 一个独立 `--user-data-dir`。
 
 ## 3. 目录结构
 
@@ -35,7 +35,9 @@
 fingerbrowser/
 ├─ package.json              依赖与脚本
 ├─ electron.vite.config.mjs  electron-vite 配置(main/preload 外部化依赖)
-├─ electron-builder.yml      打包配置(win: nsis+zip / mac: dmg+zip / linux: AppImage)
+├─ electron-builder.yml      Windows 打包配置(NSIS + ZIP、应用图标)
+├─ build/                    原创 SVG、PNG、ICO 品牌图标
+├─ scripts/generate-icons.mjs 纯 Node 多尺寸图标生成器(不新增图片依赖)
 ├─ .github/workflows/build.yml  CI:Windows 上构建+打包+上传产物
 ├─ README.md
 ├─ docs/
@@ -56,11 +58,12 @@ fingerbrowser/
       ├─ index.html
       └─ src/
          ├─ main.js          Vue 挂载
-         ├─ style.css        全局暗色样式
-         ├─ App.vue          主界面:列表/搜索/多选/批量/启停
+         ├─ style.css        全局浅色工作台与启动动效样式
+         ├─ App.vue          主界面:启动过渡/列表/搜索/多选/批量/启停
          └─ components/
-            ├─ ProfileEditor.vue  环境新建/编辑弹窗(指纹+代理+IP填充)
-            └─ SettingsModal.vue  设置弹窗(内核路径/默认起始页)
+            ├─ LogoMark.vue       品牌图标 SVG 组件
+            ├─ ProfileEditor.vue  环境新建/编辑工作台(指纹+代理+备注)
+            └─ SettingsModal.vue  内核与设置工作台(托管下载/手动回退)
 ```
 
 ## 4. 数据与文件位置
@@ -178,7 +181,7 @@ npm run dist       # 构建 + electron-builder 打包到 release/
 
 ## 10. CI / 发布流程(GitHub Actions)
 
-工作流 `.github/workflows/build.yml`:在 `windows-latest` 上安装依赖 → Node 单测 → `npm run build` → 真实启动 Electron 并截取首屏 → `electron-builder --win` → 上传安装包、ZIP 和截图。
+工作流 `.github/workflows/build.yml`:在 `windows-latest` 上安装依赖 → Node 单测 → 生成多尺寸品牌图标 → `npm run build` → 真实启动 Electron,断言启动过渡退出并截取启动/列表/设置/编辑四个界面 → `electron-builder --win` → 上传安装包、ZIP 和截图。
 
 工作流 `.github/workflows/release.yml`:推送 `v*` 标签后,先完整下载固定的上游内核并核对 SHA-256/解压结果,再重复单测、冒烟和打包,最后自动创建 Release、上传安装包/ZIP/校验文件。
 
@@ -203,7 +206,7 @@ gh repo edit oarw/fingerbrowser --visibility private --accept-visibility-change-
 - **GPU/WebGL 元数据伪装在 Windows 上受限**:内核 README 说明 WebGL 厂商/型号自定义目前主要面向 Linux,Windows 下 GPU 指纹可能有瑕疵(BrowserScan 可能标记)。
 - **地理位置(经纬度)未注入**:目前只填时区/语言;若要伪装 `geolocation`,需通过 CDP 覆盖(阶段三)。
 - **平铺仅在启动时生效**:窗口位置/大小由启动参数决定,启动后未做进程级窗口管理(那需要调用系统窗口 API)。
-- **测试仍不完整**:已有内核管理单测和真实 Electron 启动截图,但尚无完整渲染交互测试及指纹检测站点回归。
+- **测试仍不完整**:已有内核下载恢复/校验/安装测试和真实 Electron 四界面冒烟,但尚无完整渲染交互测试及指纹检测站点回归。
 - **提交作者邮箱是占位符** `oarw@users.noreply.github.com`(未改动全局 git 配置)。如需真实邮箱请告知。
 - 反检测强度参考:该内核 CreepJS 约 51.5%,可过 Cloudflare Turnstile;实际防关联仍强依赖**干净的独立代理 IP**。
 

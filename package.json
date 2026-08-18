@@ -7,10 +7,14 @@
   "main": "./out/main/index.js",
   "type": "module",
   "scripts": {
+    "icons": "node scripts/generate-icons.mjs",
+    "predev": "npm run icons",
     "dev": "electron-vite dev",
+    "prebuild": "npm run icons",
     "build": "electron-vite build",
     "test": "node --test",
     "start": "electron-vite preview",
+    "predist": "npm run icons",
     "dist": "electron-vite build && electron-builder"
   },
   "dependencies": {

@@ -19,6 +19,7 @@ import {
 } from 'lucide-vue-next'
 import ProfileEditor from './components/ProfileEditor.vue'
 import SettingsModal from './components/SettingsModal.vue'
+import LogoMark from './components/LogoMark.vue'
 
 const profiles = ref([])
 const running = ref([])
@@ -33,23 +34,32 @@ const selected = ref([])
 const batchBusy = ref(false)
 const remarkTarget = ref(null)
 const remarkDraft = ref('')
+const launching = ref(true)
 const runningSet = computed(() => new Set(running.value))
 
 let unsub = null
 
 onMounted(async () => {
-  unsub = window.api.onRunningChanged((ids) => (running.value = ids))
-  const [nextOptions, nextProfiles, nextRunning, nextKernelStatus] = await Promise.all([
-    window.api.fingerprintOptions(),
-    window.api.listProfiles(),
-    window.api.getRunning(),
-    window.api.getKernelStatus()
-  ])
-  options.value = nextOptions
-  profiles.value = nextProfiles
-  running.value = nextRunning
-  kernelStatus.value = nextKernelStatus
-  if (!nextKernelStatus.ready) activeView.value = 'settings'
+  const startedAt = performance.now()
+  try {
+    unsub = window.api.onRunningChanged((ids) => (running.value = ids))
+    const [nextOptions, nextProfiles, nextRunning, nextKernelStatus] = await Promise.all([
+      window.api.fingerprintOptions(),
+      window.api.listProfiles(),
+      window.api.getRunning(),
+      window.api.getKernelStatus()
+    ])
+    options.value = nextOptions
+    profiles.value = nextProfiles
+    running.value = nextRunning
+    kernelStatus.value = nextKernelStatus
+    if (!nextKernelStatus.ready) activeView.value = 'settings'
+  } catch (error) {
+    console.error('应用初始化失败:', error)
+  } finally {
+    const remaining = Math.max(0, 760 - (performance.now() - startedAt))
+    window.setTimeout(() => (launching.value = false), remaining)
+  }
 })
 
 onUnmounted(() => {
@@ -203,9 +213,20 @@ async function settingsSaved(status) {
 
 <template>
   <div class="app-shell">
+    <Transition name="launch-screen">
+      <div v-if="launching" class="launch-screen" aria-label="FingerBrowser 正在启动">
+        <div class="launch-identity">
+          <LogoMark class="launch-logo" />
+          <strong>FingerBrowser</strong>
+          <span>正在准备本地环境</span>
+          <div class="launch-progress" aria-hidden="true"><i></i></div>
+        </div>
+      </div>
+    </Transition>
+
     <aside class="sidebar">
       <div class="brand">
-        <span class="brand-mark">FB</span>
+        <LogoMark class="brand-mark" />
         <span class="brand-name">FingerBrowser</span>
       </div>
 

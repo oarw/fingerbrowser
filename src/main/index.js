@@ -83,6 +83,9 @@ function shutdown() {
 }
 
 function createWindow() {
+  const windowIcon = app.isPackaged
+    ? join(process.resourcesPath, 'icon.png')
+    : join(__dirname, '../../build/icon.png')
   mainWindow = new BrowserWindow({
     width: 1180,
     height: 760,
@@ -91,6 +94,7 @@ function createWindow() {
     show: false,
     autoHideMenuBar: true,
     backgroundColor: '#eef3f5',
+    icon: windowIcon,
     webPreferences: {
       preload: join(__dirname, '../preload/index.mjs'),
       nodeIntegration: false,
@@ -116,55 +120,66 @@ function createWindow() {
   })
 
   if (process.env.FINGERBROWSER_SMOKE_TEST === '1') {
-    mainWindow.webContents.once('did-finish-load', () => {
-      setTimeout(async () => {
-        try {
-          const screenshotPath = process.env.FINGERBROWSER_SMOKE_SCREENSHOT
-          if (!screenshotPath) throw new Error('FINGERBROWSER_SMOKE_SCREENSHOT is not set')
+    mainWindow.webContents.once('did-finish-load', async () => {
+      try {
+        const screenshotPath = process.env.FINGERBROWSER_SMOKE_SCREENSHOT
+        if (!screenshotPath) throw new Error('FINGERBROWSER_SMOKE_SCREENSHOT is not set')
 
-          const capture = async (path) => {
-            const image = await mainWindow.webContents.capturePage()
-            await writeFile(path, image.toPNG())
-          }
-          const click = (target) =>
-            mainWindow.webContents.executeJavaScript(
-              `document.querySelector('[data-smoke="${target}"]')?.click()`
-            )
-          const wait = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds))
-          const parsed = parse(screenshotPath)
-
-          const hasBridge = await mainWindow.webContents.executeJavaScript(
-            `Boolean(window.api && typeof window.api.listProfiles === 'function')`
-          )
-          if (!hasBridge) throw new Error('preload bridge window.api is unavailable')
-
-          await click('profiles')
-          await wait(500)
-          const profileRows = await mainWindow.webContents.executeJavaScript(
-            `document.querySelectorAll('.profile-table tbody tr').length`
-          )
-          if (profileRows !== SMOKE_PROFILES.length) {
-            throw new Error(`profile workspace rendered ${profileRows} rows; expected ${SMOKE_PROFILES.length}`)
-          }
-          await capture(screenshotPath)
-          await click('settings')
-          await wait(500)
-          await capture(join(parsed.dir, `${parsed.name}-settings${parsed.ext}`))
-          await click('profiles')
-          await wait(100)
-          await click('create')
-          await wait(500)
-          const seedGenerated = await mainWindow.webContents.executeJavaScript(
-            `document.querySelector('.seed-summary strong')?.textContent?.trim() !== '未生成'`
-          )
-          if (!seedGenerated) throw new Error('profile editor did not generate a fingerprint seed')
-          await capture(join(parsed.dir, `${parsed.name}-editor${parsed.ext}`))
-          app.exit(0)
-        } catch (error) {
-          console.error('Electron smoke capture failed:', error)
-          app.exit(1)
+        const capture = async (path) => {
+          const image = await mainWindow.webContents.capturePage()
+          await writeFile(path, image.toPNG())
         }
-      }, 1800)
+        const click = (target) =>
+          mainWindow.webContents.executeJavaScript(
+            `document.querySelector('[data-smoke="${target}"]')?.click()`
+          )
+        const wait = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds))
+        const parsed = parse(screenshotPath)
+
+        await wait(80)
+        const launchVisible = await mainWindow.webContents.executeJavaScript(
+          `Boolean(document.querySelector('.launch-screen') && document.querySelector('.launch-logo'))`
+        )
+        if (!launchVisible) throw new Error('custom launch screen was not rendered')
+        await capture(join(parsed.dir, `${parsed.name}-launch${parsed.ext}`))
+        await wait(1720)
+
+        const launchDismissed = await mainWindow.webContents.executeJavaScript(
+          `!document.querySelector('.launch-screen')`
+        )
+        if (!launchDismissed) throw new Error('custom launch screen did not dismiss')
+
+        const hasBridge = await mainWindow.webContents.executeJavaScript(
+          `Boolean(window.api && typeof window.api.listProfiles === 'function')`
+        )
+        if (!hasBridge) throw new Error('preload bridge window.api is unavailable')
+
+        await click('profiles')
+        await wait(500)
+        const profileRows = await mainWindow.webContents.executeJavaScript(
+          `document.querySelectorAll('.profile-table tbody tr').length`
+        )
+        if (profileRows !== SMOKE_PROFILES.length) {
+          throw new Error(`profile workspace rendered ${profileRows} rows; expected ${SMOKE_PROFILES.length}`)
+        }
+        await capture(screenshotPath)
+        await click('settings')
+        await wait(500)
+        await capture(join(parsed.dir, `${parsed.name}-settings${parsed.ext}`))
+        await click('profiles')
+        await wait(100)
+        await click('create')
+        await wait(500)
+        const seedGenerated = await mainWindow.webContents.executeJavaScript(
+          `document.querySelector('.seed-summary strong')?.textContent?.trim() !== '未生成'`
+        )
+        if (!seedGenerated) throw new Error('profile editor did not generate a fingerprint seed')
+        await capture(join(parsed.dir, `${parsed.name}-editor${parsed.ext}`))
+        app.exit(0)
+      } catch (error) {
+        console.error('Electron smoke capture failed:', error)
+        app.exit(1)
+      }
     })
   }
 

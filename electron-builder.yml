@@ -6,7 +6,11 @@ directories:
 files:
   - out/**/*
   - package.json
+extraResources:
+  - from: build/icon.png
+    to: icon.png
 win:
+  icon: build/icon.ico
   target:
     - target: nsis
       arch:
@@ -15,15 +19,8 @@ win:
       arch:
         - x64
 nsis:
+  installerIcon: build/icon.ico
+  uninstallerIcon: build/icon.ico
   oneClick: false
   allowToChangeInstallationDirectory: true
   perMachine: false
-mac:
-  target:
-    - dmg
-    - zip
-  category: public.app-category.utilities
-linux:
-  target:
-    - AppImage
-  category: Utility

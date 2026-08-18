@@ -84,13 +84,14 @@ async function expandZip(archivePath, destination) {
 export class KernelManager {
   constructor(baseDir, options = {}) {
     this.baseDir = baseDir
+    this.kernel = options.kernel || MANAGED_KERNEL
     this.fetch = options.fetch || fetch
     this.expandZip = options.expandZip || expandZip
     this.platform = options.platform || process.platform
     this.installPromise = null
     this.abortController = null
     this.listeners = new Set()
-    this.progress = { stage: 'idle', received: 0, total: MANAGED_KERNEL.size, percent: 0 }
+    this.progress = { stage: 'idle', received: 0, total: this.kernel.size, percent: 0 }
   }
 
   onProgress(listener) {
@@ -104,11 +105,11 @@ export class KernelManager {
   }
 
   versionDir() {
-    return join(this.baseDir, MANAGED_KERNEL.version)
+    return join(this.baseDir, this.kernel.version)
   }
 
   archivePath() {
-    return join(this.baseDir, 'downloads', `${MANAGED_KERNEL.archiveName}.part`)
+    return join(this.baseDir, 'downloads', `${this.kernel.archiveName}.part`)
   }
 
   async managedExecutable() {
@@ -135,7 +136,7 @@ export class KernelManager {
       managed: {
         installed: Boolean(managedPath),
         path: managedPath,
-        ...MANAGED_KERNEL
+        ...this.kernel
       },
       progress: this.progress
     }
@@ -173,7 +174,7 @@ export class KernelManager {
   async runInstall() {
     const existing = await this.managedExecutable()
     if (existing) {
-      this.emitProgress({ stage: 'ready', received: MANAGED_KERNEL.size, percent: 100 })
+      this.emitProgress({ stage: 'ready', received: this.kernel.size, percent: 100 })
       return existing
     }
 
@@ -182,7 +183,7 @@ export class KernelManager {
     let received = 0
     try {
       received = (await stat(archivePath)).size
-      if (received > MANAGED_KERNEL.size) {
+      if (received > this.kernel.size) {
         await rm(archivePath, { force: true })
         received = 0
       }
@@ -190,7 +191,7 @@ export class KernelManager {
       received = 0
     }
 
-    if (received < MANAGED_KERNEL.size) {
+    if (received < this.kernel.size) {
       this.abortController = new AbortController()
       const headers = { 'User-Agent': 'FingerBrowser-Kernel-Manager' }
       if (received > 0) headers.Range = `bytes=${received}-`
@@ -198,11 +199,11 @@ export class KernelManager {
       this.emitProgress({
         stage: 'downloading',
         received,
-        total: MANAGED_KERNEL.size,
-        percent: Math.floor((received / MANAGED_KERNEL.size) * 100)
+        total: this.kernel.size,
+        percent: Math.floor((received / this.kernel.size) * 100)
       })
 
-      const response = await this.fetch(MANAGED_KERNEL.downloadUrl, {
+      const response = await this.fetch(this.kernel.downloadUrl, {
         headers,
         redirect: 'follow',
         signal: this.abortController.signal
@@ -217,13 +218,13 @@ export class KernelManager {
         transform: (chunk, _encoding, callback) => {
           received += chunk.length
           const now = Date.now()
-          if (now - lastProgressAt >= 120 || received >= MANAGED_KERNEL.size) {
+          if (now - lastProgressAt >= 120 || received >= this.kernel.size) {
             lastProgressAt = now
             this.emitProgress({
               stage: 'downloading',
               received,
-              total: MANAGED_KERNEL.size,
-              percent: Math.min(100, Math.floor((received / MANAGED_KERNEL.size) * 100))
+              total: this.kernel.size,
+              percent: Math.min(100, Math.floor((received / this.kernel.size) * 100))
             })
           }
           callback(null, chunk)
@@ -238,7 +239,7 @@ export class KernelManager {
         )
       } catch (error) {
         if (this.abortController.signal.aborted) {
-          this.emitProgress({ stage: 'paused', received, percent: Math.floor((received / MANAGED_KERNEL.size) * 100) })
+          this.emitProgress({ stage: 'paused', received, percent: Math.floor((received / this.kernel.size) * 100) })
           throw new Error('内核下载已暂停,下次可继续')
         }
         throw error
@@ -246,13 +247,13 @@ export class KernelManager {
     }
 
     const archiveSize = (await stat(archivePath)).size
-    if (archiveSize !== MANAGED_KERNEL.size) {
-      throw new Error(`内核文件大小异常:应为 ${MANAGED_KERNEL.size} 字节,实际为 ${archiveSize} 字节`)
+    if (archiveSize !== this.kernel.size) {
+      throw new Error(`内核文件大小异常:应为 ${this.kernel.size} 字节,实际为 ${archiveSize} 字节`)
     }
 
     this.emitProgress({ stage: 'verifying', received: archiveSize, percent: 100 })
     const digest = await sha256File(archivePath)
-    if (digest !== MANAGED_KERNEL.sha256) {
+    if (digest !== this.kernel.sha256) {
       await rm(archivePath, { force: true })
       throw new Error('内核 SHA-256 校验失败,已删除损坏文件')
     }
@@ -271,7 +272,7 @@ export class KernelManager {
       const executableRelativePath = relative(staging, executable)
       await writeFile(
         join(staging, METADATA_FILE),
-        JSON.stringify({ version: MANAGED_KERNEL.version, executable: executableRelativePath }, null, 2),
+        JSON.stringify({ version: this.kernel.version, executable: executableRelativePath }, null, 2),
         'utf-8'
       )
 
@@ -287,7 +288,7 @@ export class KernelManager {
       await rm(archivePath, { force: true })
 
       const installedPath = join(destination, executableRelativePath)
-      this.emitProgress({ stage: 'ready', received: MANAGED_KERNEL.size, percent: 100 })
+      this.emitProgress({ stage: 'ready', received: this.kernel.size, percent: 100 })
       return installedPath
     } catch (error) {
       await rm(staging, { recursive: true, force: true })

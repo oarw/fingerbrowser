@@ -1,10 +1,11 @@
 import assert from 'node:assert/strict'
-import { mkdir, rm, writeFile } from 'node:fs/promises'
-import { join } from 'node:path'
+import { access, mkdir, rm, writeFile } from 'node:fs/promises'
+import { dirname, join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { after, before, test } from 'node:test'
-import { randomUUID } from 'node:crypto'
-import { findChromeExecutable, MANAGED_KERNEL, sha256File } from '../src/main/kernelManager.js'
+import { createHash, randomUUID } from 'node:crypto'
+import { Response } from 'undici'
+import { findChromeExecutable, KernelManager, MANAGED_KERNEL, sha256File } from '../src/main/kernelManager.js'
 
 const root = join(tmpdir(), `fingerbrowser-kernel-test-${randomUUID()}`)
 
@@ -30,4 +31,48 @@ test('findChromeExecutable locates chrome.exe below an archive root', async () =
   await mkdir(chromeDir, { recursive: true })
   await writeFile(join(chromeDir, 'chrome.exe'), '')
   assert.equal(await findChromeExecutable(archiveRoot), join(chromeDir, 'chrome.exe'))
+})
+
+test('KernelManager resumes, verifies, installs, and activates a managed kernel', async () => {
+  const baseDir = join(root, 'manager')
+  const archive = Buffer.from('small deterministic archive payload')
+  const splitAt = 11
+  const kernel = {
+    version: 'test-1',
+    label: 'Test Chromium',
+    archiveName: 'test-kernel.zip',
+    downloadUrl: 'https://example.test/test-kernel.zip',
+    size: archive.length,
+    sha256: createHash('sha256').update(archive).digest('hex'),
+    sourceUrl: 'https://example.test/source'
+  }
+  let requestedRange = ''
+
+  const manager = new KernelManager(baseDir, {
+    platform: 'win32',
+    kernel,
+    fetch: async (_url, options) => {
+      requestedRange = options.headers.Range
+      return new Response(archive.subarray(splitAt), { status: 206 })
+    },
+    expandZip: async (_archivePath, destination) => {
+      const chromeDir = join(destination, 'chromium')
+      await mkdir(chromeDir, { recursive: true })
+      await writeFile(join(chromeDir, 'chrome.exe'), 'test executable')
+    }
+  })
+
+  await mkdir(dirname(manager.archivePath()), { recursive: true })
+  await writeFile(manager.archivePath(), archive.subarray(0, splitAt))
+
+  const executable = await manager.install()
+  await access(executable)
+  assert.equal(requestedRange, `bytes=${splitAt}-`)
+  assert.equal(manager.progress.stage, 'ready')
+
+  const status = await manager.getStatus(executable)
+  assert.equal(status.ready, true)
+  assert.equal(status.source, 'managed')
+  assert.equal(status.managed.version, kernel.version)
+  assert.equal(status.managed.path, executable)
 })
