@@ -21,6 +21,10 @@ const api = {
   cancelKernelInstall: () => ipcRenderer.invoke('kernel:cancel'),
   openKernelDirectory: () => ipcRenderer.invoke('kernel:open-directory'),
   openKernelSource: () => ipcRenderer.invoke('kernel:open-source'),
+  getKernelLog: () => ipcRenderer.invoke('kernel:get-log'),
+  clearKernelLog: () => ipcRenderer.invoke('kernel:clear-log'),
+  copyKernelLog: () => ipcRenderer.invoke('kernel:copy-log'),
+  openKernelLog: () => ipcRenderer.invoke('kernel:open-log'),
   onKernelProgress: (cb) => {
     const listener = (_e, progress) => cb(progress)
     ipcRenderer.on('kernel:progress', listener)
@@ -32,7 +36,8 @@ const api = {
   fingerprintOptions: () => ipcRenderer.invoke('fingerprint:options'),
   detectGeo: (proxy) => ipcRenderer.invoke('geo:detect', proxy),
 
-  pickKernel: () => ipcRenderer.invoke('dialog:pick-kernel')
+  pickKernel: () => ipcRenderer.invoke('dialog:pick-kernel'),
+  pickKernelDirectory: () => ipcRenderer.invoke('dialog:pick-kernel-directory')
 }
 
 contextBridge.exposeInMainWorld('api', api)

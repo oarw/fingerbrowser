@@ -48,8 +48,8 @@ jobs:
           npx electron .
           if ($LASTEXITCODE -ne 0) { throw "Electron smoke test exited with $LASTEXITCODE" }
           $screenshots = @(Get-ChildItem -LiteralPath artifacts -File -Filter 'ui-*.png')
-          if ($screenshots.Count -ne 4) {
-            throw "Electron smoke test created $($screenshots.Count) screenshots; expected 4"
+          if ($screenshots.Count -ne 5) {
+            throw "Electron smoke test created $($screenshots.Count) screenshots; expected 5"
           }
 
       - name: Upload smoke screenshot

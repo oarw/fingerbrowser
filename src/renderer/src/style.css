@@ -949,6 +949,40 @@ label {
   white-space: nowrap;
 }
 
+.kernel-directory-setting {
+  margin-top: 12px;
+  border-top: 1px solid var(--border);
+  padding-top: 12px;
+}
+
+.field-label-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 7px;
+}
+
+.field-label-row label {
+  margin: 0;
+}
+
+.directory-mode {
+  border-radius: 3px;
+  background: var(--green-soft);
+  color: var(--green);
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 20px;
+  padding: 0 6px;
+  white-space: nowrap;
+}
+
+.kernel-directory-setting .inline-control input {
+  min-width: 0;
+  flex: 1;
+}
+
 .download-progress {
   margin-top: 12px;
   border: 1px solid var(--border);
@@ -1012,6 +1046,107 @@ label {
 
 .kernel-actions {
   margin-top: 12px;
+  flex-wrap: wrap;
+}
+
+.kernel-error-message span {
+  min-width: 0;
+  flex: 1;
+}
+
+.kernel-error-message .text-button {
+  flex: none;
+  margin-left: auto;
+  color: currentColor;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.install-log-panel {
+  margin-top: 12px;
+  overflow: hidden;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
+  background: var(--surface-strong);
+}
+
+.install-log-header {
+  display: flex;
+  min-height: 48px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 8px 10px 8px 12px;
+}
+
+.install-log-title,
+.install-log-tools,
+.install-log-feedback {
+  display: flex;
+  align-items: center;
+}
+
+.install-log-title {
+  gap: 7px;
+  color: var(--text);
+  font-size: 12px;
+}
+
+.install-log-tools {
+  gap: 6px;
+}
+
+.install-log-feedback {
+  gap: 4px;
+  margin-right: 3px;
+  color: var(--green);
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+.install-log-viewer,
+.install-log-empty {
+  min-height: 132px;
+  max-height: 270px;
+  margin: 0;
+  overflow: auto;
+  border-top: 1px solid var(--border);
+  background: #f4f7f8;
+  color: #30434d;
+  font-family: Consolas, 'Cascadia Mono', monospace;
+  font-size: 11px;
+  line-height: 1.65;
+}
+
+.install-log-viewer {
+  padding: 12px;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+
+.install-log-empty {
+  display: grid;
+  place-items: center;
+  color: var(--text-faint);
+}
+
+.install-log-path {
+  overflow: hidden;
+  border-top: 1px solid var(--border);
+  color: var(--text-faint);
+  font-size: 10px;
+  line-height: 30px;
+  padding: 0 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.spinning {
+  animation: log-spin 900ms linear infinite;
+}
+
+@keyframes log-spin {
+  to { transform: rotate(360deg); }
 }
 
 .editor-content {

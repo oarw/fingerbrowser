@@ -72,8 +72,8 @@ fingerbrowser/
 运行时数据存在 Electron 的 `userData` 目录(Windows:`%APPDATA%\fingerbrowser\`):
 
 - `profiles.json` — 所有环境配置(数组)
-- `settings.json` — 应用设置(`kernelPath`、`managedKernelVersion`、`defaultStartupUrl`)
-- `kernels/` — 应用管理的内核、下载断点与安装元数据
+- `settings.json` — 应用设置(`kernelPath`、`kernelDirectory`、`managedKernelVersion`、`defaultStartupUrl`)
+- 托管内核目录 — 打包版默认位于软件安装目录下的 `kernels/`,可通过 `kernelDirectory` 改为其他位置;包含下载断点、安装元数据和 `install.log`
 - `profiles/<环境id>/` — 每个环境独立的浏览器数据目录(Cookie/缓存/存储,物理隔离)
 
 > 删除环境时**不会**删除其 `profiles/<id>/` 目录,避免误删登录态。需要清理时手动删。
@@ -182,7 +182,7 @@ npm run dist       # 构建 + electron-builder 打包到 release/
 
 ## 10. CI / 发布流程(GitHub Actions)
 
-工作流 `.github/workflows/build.yml`:在 `windows-latest` 上安装依赖 → Node 单测 → 生成多尺寸品牌图标 → `npm run build` → 真实启动 Electron,断言启动过渡退出并截取启动/列表/设置/编辑四个界面 → `electron-builder --win` → 上传安装包、ZIP 和截图。
+工作流 `.github/workflows/build.yml`:在 `windows-latest` 上安装依赖 → Node 单测 → 生成多尺寸品牌图标 → `npm run build` → 真实启动 Electron,断言启动过渡退出并截取启动/列表/设置/安装日志/编辑五个界面 → `electron-builder --win` → 上传安装包、ZIP 和截图。
 
 工作流 `.github/workflows/release.yml`:推送 `v*` 标签后,先完整下载固定的上游内核并核对 SHA-256/解压结果,再重复单测、冒烟和打包,最后自动创建 Release、上传安装包/ZIP/校验文件。
 

@@ -61,8 +61,8 @@ jobs:
           npx electron .
           if ($LASTEXITCODE -ne 0) { throw "Electron smoke test exited with $LASTEXITCODE" }
           $screenshots = @(Get-ChildItem -LiteralPath artifacts -File -Filter 'ui-*.png')
-          if ($screenshots.Count -ne 4) {
-            throw "Electron smoke test created $($screenshots.Count) screenshots; expected 4"
+          if ($screenshots.Count -ne 5) {
+            throw "Electron smoke test created $($screenshots.Count) screenshots; expected 5"
           }
 
       - name: Upload smoke screenshot
@@ -114,9 +114,19 @@ jobs:
           - An original app and installer icon plus a custom startup transition replace the Electron defaults.
           - The installer is not code-signed yet, so Windows SmartScreen may show an unknown publisher warning.
           - This is an MVP release without automated fingerprint-consistency guarantees.
+          - Kernel downloads now use Electron's Chromium network stack so Windows system proxy settings are honored.
+          - Kernel installation logs can be viewed, copied, opened, refreshed, and cleared from Settings.
           "@
 
-          gh release create $env:GITHUB_REF_NAME @assets `
-            --verify-tag `
-            --title "FingerBrowser $env:GITHUB_REF_NAME" `
-            --notes $notes
+          $releaseOptions = @(
+            '--verify-tag'
+            '--title'
+            "FingerBrowser $env:GITHUB_REF_NAME"
+            '--notes'
+            $notes
+          )
+          if ($env:GITHUB_REF_NAME -match '-') {
+            $releaseOptions += '--prerelease'
+          }
+
+          gh release create $env:GITHUB_REF_NAME @assets @releaseOptions
