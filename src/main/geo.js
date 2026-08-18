@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto'
 import { request, ProxyAgent } from 'undici'
-import { startBridge, startSystemBridge, stopBridge } from './proxyBridge.js'
+import { getBridgeFailure, startBridge, startSystemBridge, stopBridge } from './proxyBridge.js'
 import { localeForCountry } from './locale.js'
 import { proxyIdentity } from './profileManifest.js'
 
@@ -114,6 +114,30 @@ function conciseError(error) {
   return code && !message.includes(code) ? `${code} ${message}` : message
 }
 
+export function describeBridgeFailure(proxy, failure) {
+  if (!failure) return ''
+  const statusCode = Number(failure.statusCode)
+  const protocol = String(proxy?.type || 'http').toUpperCase()
+  if (statusCode === 401 || statusCode === 407) {
+    return `指定 ${protocol} 代理要求认证（HTTP ${statusCode}），请填写代理用户名和密码`
+  }
+  if (statusCode >= 400 && statusCode < 500) {
+    if (protocol === 'HTTPS') {
+      return `指定 HTTPS 代理在 TLS 隧道中返回 HTTP ${statusCode}，它可能是普通 HTTP 代理、网页入口、协议/端口不匹配，或要求其他认证方式；端口 443 本身不代表必须选择 HTTPS`
+    }
+    return `指定 ${protocol} 代理拒绝 CONNECT（HTTP ${statusCode}），请核对代理协议、端口和账号密码`
+  }
+  if (statusCode >= 500) {
+    return `代理链路返回 HTTP ${statusCode}，请核对指定代理是否在线以及系统代理/V2Ray 是否允许连接该地址`
+  }
+  if (failure.code === 'DEPTH_ZERO_SELF_SIGNED_CERT' || failure.code === 'ERR_TLS_CERT_ALTNAME_INVALID') {
+    return '指定代理的 TLS 证书无法通过校验；仅在确认代理可信时开启“跳过代理证书认证”'
+  }
+  if (failure.code) return `代理 ${failure.stage === 'system' ? '系统/V2Ray' : '指定出口'} 阶段失败（${failure.code}）`
+  if (failure.message) return `代理 ${failure.stage === 'system' ? '系统/V2Ray' : '指定出口'} 阶段失败：${failure.message}`
+  return ''
+}
+
 async function queryProvider(provider, dispatcher, proxy, systemProxyUrl, controller) {
   try {
     const { statusCode, body } = await request(provider.url, {
@@ -157,7 +181,9 @@ export async function detectGeo(proxy, options = {}) {
       return await Promise.any(attempts)
     } catch (aggregate) {
       const details = (aggregate.errors || []).map(conciseError).join('；')
-      throw new Error(`出口 IP 检测失败，已尝试 ${GEO_PROVIDERS.map((item) => item.label).join('、')}。${details}`)
+      const bridgeHint = describeBridgeFailure(proxy, getBridgeFailure(key))
+      const diagnosis = bridgeHint ? `链路诊断：${bridgeHint}。` : ''
+      throw new Error(`出口 IP 检测失败。${diagnosis}已尝试 ${GEO_PROVIDERS.map((item) => item.label).join('、')}。技术详情：${details}`)
     } finally {
       controllers.forEach((controller) => controller.abort())
       await Promise.allSettled(attempts)

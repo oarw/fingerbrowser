@@ -7,6 +7,7 @@ import { loadProfiles, saveProfiles, loadSettings, saveSettings } from './store.
 import { launch, stop, stopAll, runningIds } from './launcher.js'
 import { randomFingerprint, randomSeed, OPTIONS } from './fingerprint.js'
 import { KernelManager, MANAGED_KERNEL } from './kernelManager.js'
+import { migrateLegacyKernelDirectory } from './kernelMigration.js'
 import { detectGeo } from './geo.js'
 import { parseSystemProxyResult } from './proxyBridge.js'
 import {
@@ -31,8 +32,12 @@ let allowWindowClose = false
 const gotSingleInstanceLock = app.requestSingleInstanceLock()
 
 function defaultKernelDirectory() {
-  const root = app.isPackaged ? dirname(app.getPath('exe')) : app.getPath('userData')
-  return join(root, 'kernels')
+  if (!app.isPackaged) return join(app.getPath('userData'), 'kernels')
+  return resolve(dirname(app.getPath('exe')), '..', 'FingerBrowserData', 'kernels')
+}
+
+function legacyKernelDirectory() {
+  return join(dirname(app.getPath('exe')), 'kernels')
 }
 
 function normalizeKernelDirectory(value) {
@@ -43,6 +48,17 @@ function normalizeKernelDirectory(value) {
 async function loadRuntimeSettings() {
   const settings = await loadSettings()
   return { ...settings, kernelDirectory: normalizeKernelDirectory(settings.kernelDirectory) }
+}
+
+async function migrateLegacyKernelSettings(settings) {
+  if (!app.isPackaged) return settings
+  const next = await migrateLegacyKernelDirectory(
+    settings,
+    legacyKernelDirectory(),
+    defaultKernelDirectory()
+  )
+  if (next !== settings) await saveSettings(next)
+  return next
 }
 
 async function getRuntimeKernelStatus(configuredPath) {
@@ -334,7 +350,9 @@ if (!gotSingleInstanceLock) {
   })
 
   app.whenReady().then(async () => {
-    const settings = await loadRuntimeSettings()
+    let settings = await loadSettings()
+    settings = await migrateLegacyKernelSettings(settings)
+    settings = { ...settings, kernelDirectory: normalizeKernelDirectory(settings.kernelDirectory) }
     runInBackground = Boolean(settings.runInBackground)
     kernelManager = new KernelManager(settings.kernelDirectory, {
       fetch: (url, options) => net.fetch(url, options),
