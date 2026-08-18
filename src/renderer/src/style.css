@@ -949,6 +949,40 @@ label {
   white-space: nowrap;
 }
 
+.kernel-directory-setting {
+  margin-top: 12px;
+  border-top: 1px solid var(--border);
+  padding-top: 12px;
+}
+
+.field-label-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 7px;
+}
+
+.field-label-row label {
+  margin: 0;
+}
+
+.directory-mode {
+  border-radius: 3px;
+  background: var(--green-soft);
+  color: var(--green);
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 20px;
+  padding: 0 6px;
+  white-space: nowrap;
+}
+
+.kernel-directory-setting .inline-control input {
+  min-width: 0;
+  flex: 1;
+}
+
 .download-progress {
   margin-top: 12px;
   border: 1px solid var(--border);

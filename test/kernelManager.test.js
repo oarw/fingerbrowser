@@ -120,3 +120,24 @@ test('KernelManager preserves network error causes in the install log', async ()
   const cleared = await manager.clearLog()
   assert.equal(cleared.text, '')
 })
+
+test('KernelManager switches all managed paths with its base directory', async () => {
+  const initialDirectory = join(root, 'switch-initial')
+  const nextDirectory = join(root, 'switch-next')
+  const manager = new KernelManager(initialDirectory, {
+    platform: 'win32',
+    kernel: {
+      ...MANAGED_KERNEL,
+      version: 'test-directory-switch',
+      archiveName: 'test-directory-switch.zip'
+    }
+  })
+
+  manager.setBaseDir(nextDirectory)
+
+  assert.equal(manager.baseDir, nextDirectory)
+  assert.equal(manager.versionDir(), join(nextDirectory, 'test-directory-switch'))
+  assert.equal(manager.archivePath(), join(nextDirectory, 'downloads', 'test-directory-switch.zip.part'))
+  assert.equal((await manager.getLog()).path, join(nextDirectory, 'install.log'))
+  assert.equal(manager.progress.stage, 'idle')
+})

@@ -14,14 +14,15 @@ import {
   HardDriveDownload,
   PauseCircle,
   RefreshCw,
+  RotateCcw,
   Save,
   Trash2
 } from 'lucide-vue-next'
 
 const emit = defineEmits(['close', 'saved'])
 
-const form = reactive({ kernelPath: '', managedKernelVersion: '', defaultStartupUrl: '' })
-const status = ref({ ready: false, source: 'none', managed: {}, progress: { stage: 'idle', percent: 0 } })
+const form = reactive({ kernelPath: '', kernelDirectory: '', managedKernelVersion: '', defaultStartupUrl: '' })
+const status = ref({ ready: false, source: 'none', managed: {}, progress: { stage: 'idle', percent: 0 }, defaultDirectory: '' })
 const progress = ref({ stage: 'idle', received: 0, total: 0, percent: 0 })
 const error = ref('')
 const saving = ref(false)
@@ -53,6 +54,11 @@ const installButtonLabel = computed(() => {
   if (status.value.source === 'managed') return '内核已安装'
   if (progress.value.stage === 'paused') return '继续下载'
   return '下载并安装'
+})
+
+const usesDefaultDirectory = computed(() => {
+  const normalize = (value) => String(value || '').replace(/[\\/]+$/, '').toLowerCase()
+  return normalize(form.kernelDirectory) === normalize(status.value.defaultDirectory)
 })
 
 function formatBytes(value) {
@@ -125,6 +131,7 @@ async function install() {
   if (status.value.source === 'managed') return
   error.value = ''
   try {
+    Object.assign(form, await window.api.setSettings(JSON.parse(JSON.stringify(form))))
     const result = await window.api.installKernel()
     if (!result.ok) {
       progress.value = result.progress || progress.value
@@ -155,9 +162,24 @@ async function pick() {
   if (path) form.kernelPath = path
 }
 
+async function pickKernelDirectory() {
+  const path = await window.api.pickKernelDirectory()
+  if (path) form.kernelDirectory = path
+}
+
+function resetKernelDirectory() {
+  form.kernelDirectory = status.value.defaultDirectory
+}
+
 async function openDirectory() {
-  const errorMessage = await window.api.openKernelDirectory()
-  if (errorMessage) error.value = errorMessage
+  error.value = ''
+  try {
+    Object.assign(form, await window.api.setSettings(JSON.parse(JSON.stringify(form))))
+    const errorMessage = await window.api.openKernelDirectory()
+    if (errorMessage) error.value = errorMessage
+  } catch (openError) {
+    error.value = openError.message || String(openError)
+  }
 }
 
 async function openSource() {
@@ -168,9 +190,10 @@ async function save() {
   saving.value = true
   error.value = ''
   try {
-    await window.api.setSettings(JSON.parse(JSON.stringify(form)))
+    Object.assign(form, await window.api.setSettings(JSON.parse(JSON.stringify(form))))
     const nextStatus = await window.api.getKernelStatus()
     status.value = nextStatus
+    if (logOpen.value) await refreshLog()
     emit('saved', nextStatus)
   } catch (saveError) {
     error.value = saveError.message || String(saveError)
@@ -217,6 +240,24 @@ async function save() {
           >
             <Download :size="16" />{{ installButtonLabel }}
           </button>
+        </div>
+
+        <div class="kernel-directory-setting">
+          <div class="field-label-row">
+            <label for="kernel-directory">内核安装目录</label>
+            <span v-if="usesDefaultDirectory" class="directory-mode">跟随软件目录</span>
+          </div>
+          <div class="inline-control">
+            <input
+              id="kernel-directory"
+              v-model="form.kernelDirectory"
+              data-smoke="kernel-directory"
+              :disabled="isInstalling"
+              placeholder="选择内核下载与安装目录"
+            />
+            <button class="btn-secondary" type="button" :disabled="isInstalling" @click="pickKernelDirectory"><FolderOpen :size="16" />浏览</button>
+            <button class="icon-button" type="button" title="恢复为软件安装目录" aria-label="恢复为软件安装目录" :disabled="isInstalling || usesDefaultDirectory" @click="resetKernelDirectory"><RotateCcw :size="16" /></button>
+          </div>
         </div>
 
         <div v-if="isInstalling || progress.stage === 'paused'" class="download-progress">

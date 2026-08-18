@@ -49,6 +49,15 @@ function findErrorCode(error) {
   return ''
 }
 
+function presentInstallError(error, baseDir) {
+  const code = findErrorCode(error)
+  if (!['EACCES', 'EPERM'].includes(code)) return error
+  return new Error(
+    `无法写入内核目录 "${baseDir}" (${code}),请选择当前用户可写的目录后重试`,
+    { cause: error }
+  )
+}
+
 async function pathExists(path) {
   if (!path) return false
   try {
@@ -116,11 +125,20 @@ export class KernelManager {
     this.networkLabel = options.networkLabel || 'Node fetch'
     this.expandZip = options.expandZip || expandZip
     this.platform = options.platform || process.platform
-    this.installLogPath = options.logPath || join(baseDir, 'install.log')
+    this.customLogPath = options.logPath || ''
+    this.installLogPath = this.customLogPath || join(baseDir, 'install.log')
     this.logWritePromise = Promise.resolve()
     this.installPromise = null
     this.abortController = null
     this.listeners = new Set()
+    this.progress = { stage: 'idle', received: 0, total: this.kernel.size, percent: 0 }
+  }
+
+  setBaseDir(baseDir) {
+    if (!baseDir || baseDir === this.baseDir) return
+    if (this.installPromise) throw new Error('内核正在安装,暂时不能更改安装目录')
+    this.baseDir = baseDir
+    if (!this.customLogPath) this.installLogPath = join(baseDir, 'install.log')
     this.progress = { stage: 'idle', received: 0, total: this.kernel.size, percent: 0 }
   }
 
@@ -214,14 +232,15 @@ export class KernelManager {
 
     this.installPromise = this.runInstall()
       .catch(async (error) => {
+        const reportedError = this.progress.stage === 'paused' ? error : presentInstallError(error, this.baseDir)
         await this.writeLog(this.progress.stage === 'paused' ? 'WARN' : 'ERROR', '安装结束', {
           stage: this.progress.stage,
-          error: serializeError(error)
+          error: serializeError(reportedError)
         })
         if (this.progress.stage !== 'paused') {
-          this.emitProgress({ stage: 'error', message: error.message || String(error) })
+          this.emitProgress({ stage: 'error', message: reportedError.message || String(reportedError) })
         }
-        throw error
+        throw reportedError
       })
       .finally(() => {
         this.installPromise = null

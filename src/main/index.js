@@ -1,8 +1,8 @@
 import { app, shell, BrowserWindow, clipboard, ipcMain, dialog, net, screen, session } from 'electron'
-import { dirname, join, parse } from 'node:path'
+import { dirname, join, parse, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { randomUUID } from 'node:crypto'
-import { writeFile } from 'node:fs/promises'
+import { mkdir, writeFile } from 'node:fs/promises'
 import { loadProfiles, saveProfiles, loadSettings, saveSettings } from './store.js'
 import { launch, stop, stopAll, runningIds } from './launcher.js'
 import { randomFingerprint, randomSeed, OPTIONS } from './fingerprint.js'
@@ -18,6 +18,30 @@ let isQuitting = false
 let kernelManager = null
 
 const gotSingleInstanceLock = app.requestSingleInstanceLock()
+
+function defaultKernelDirectory() {
+  const root = app.isPackaged ? dirname(app.getPath('exe')) : app.getPath('userData')
+  return join(root, 'kernels')
+}
+
+function normalizeKernelDirectory(value) {
+  const directory = typeof value === 'string' ? value.trim() : ''
+  return directory ? resolve(directory) : defaultKernelDirectory()
+}
+
+async function loadRuntimeSettings() {
+  const settings = await loadSettings()
+  return { ...settings, kernelDirectory: normalizeKernelDirectory(settings.kernelDirectory) }
+}
+
+async function getRuntimeKernelStatus(configuredPath) {
+  const status = await kernelManager.getStatus(configuredPath)
+  return {
+    ...status,
+    directory: kernelManager.baseDir,
+    defaultDirectory: defaultKernelDirectory()
+  }
+}
 
 const SMOKE_PROFILES = [
   {
@@ -165,6 +189,10 @@ function createWindow() {
         await capture(screenshotPath)
         await click('settings')
         await wait(500)
+        const kernelDirectoryConfigured = await mainWindow.webContents.executeJavaScript(
+          `document.querySelector('[data-smoke="kernel-directory"]')?.value?.toLowerCase().endsWith('kernels')`
+        )
+        if (!kernelDirectoryConfigured) throw new Error('default kernel directory was not configured')
         await capture(join(parsed.dir, `${parsed.name}-settings${parsed.ext}`))
         await click('kernel-log')
         await wait(300)
@@ -224,8 +252,9 @@ if (!gotSingleInstanceLock) {
     mainWindow.focus()
   })
 
-  app.whenReady().then(() => {
-    kernelManager = new KernelManager(join(app.getPath('userData'), 'kernels'), {
+  app.whenReady().then(async () => {
+    const settings = await loadRuntimeSettings()
+    kernelManager = new KernelManager(settings.kernelDirectory, {
       fetch: (url, options) => net.fetch(url, options),
       resolveProxy: (url) => session.defaultSession.resolveProxy(url),
       networkLabel: 'Electron net.fetch (Chromium network stack)'
@@ -368,15 +397,22 @@ function registerIpc() {
 
   ipcMain.handle('profiles:running', () => runningIds())
 
-  ipcMain.handle('settings:get', () => loadSettings())
+  ipcMain.handle('settings:get', () => loadRuntimeSettings())
   ipcMain.handle('settings:set', async (_e, settings) => {
-    await saveSettings({ ...(await loadSettings()), ...settings })
-    return loadSettings()
+    const current = await loadRuntimeSettings()
+    const next = {
+      ...current,
+      ...settings,
+      kernelDirectory: normalizeKernelDirectory(settings.kernelDirectory ?? current.kernelDirectory)
+    }
+    kernelManager.setBaseDir(next.kernelDirectory)
+    await saveSettings(next)
+    return next
   })
 
   ipcMain.handle('kernel:status', async () => {
-    const settings = await loadSettings()
-    return kernelManager.getStatus(settings.kernelPath)
+    const settings = await loadRuntimeSettings()
+    return getRuntimeKernelStatus(settings.kernelPath)
   })
 
   ipcMain.handle('kernel:install', async () => {
@@ -388,7 +424,7 @@ function registerIpc() {
         kernelPath,
         managedKernelVersion: MANAGED_KERNEL.version
       })
-      return { ok: true, status: await kernelManager.getStatus(kernelPath) }
+      return { ok: true, status: await getRuntimeKernelStatus(kernelPath) }
     } catch (error) {
       return {
         ok: false,
@@ -399,7 +435,14 @@ function registerIpc() {
   })
 
   ipcMain.handle('kernel:cancel', () => kernelManager.cancel())
-  ipcMain.handle('kernel:open-directory', () => shell.openPath(kernelManager.baseDir))
+  ipcMain.handle('kernel:open-directory', async () => {
+    try {
+      await mkdir(kernelManager.baseDir, { recursive: true })
+      return shell.openPath(kernelManager.baseDir)
+    } catch (error) {
+      return error.message || String(error)
+    }
+  })
   ipcMain.handle('kernel:open-source', () => shell.openExternal(MANAGED_KERNEL.sourceUrl))
   ipcMain.handle('kernel:get-log', () => kernelManager.getLog())
   ipcMain.handle('kernel:clear-log', () => kernelManager.clearLog())
@@ -427,6 +470,17 @@ function registerIpc() {
       title: '选择 fingerprint-chromium 内核',
       properties: ['openFile'],
       filters: [{ name: 'Chromium', extensions: ['exe', 'app', ''] }]
+    })
+    if (result.canceled || result.filePaths.length === 0) return ''
+    return result.filePaths[0]
+  })
+
+  ipcMain.handle('dialog:pick-kernel-directory', async () => {
+    const settings = await loadRuntimeSettings()
+    const result = await dialog.showOpenDialog(mainWindow, {
+      title: '选择内核安装目录',
+      defaultPath: settings.kernelDirectory,
+      properties: ['openDirectory', 'createDirectory']
     })
     if (result.canceled || result.filePaths.length === 0) return ''
     return result.filePaths[0]
