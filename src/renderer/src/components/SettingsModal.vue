@@ -21,7 +21,7 @@ import {
 
 const emit = defineEmits(['close', 'saved'])
 
-const form = reactive({ kernelPath: '', kernelDirectory: '', managedKernelVersion: '', defaultStartupUrl: '' })
+const form = reactive({ kernelPath: '', kernelDirectory: '', managedKernelVersion: '', runInBackground: false, defaultStartupUrl: '' })
 const status = ref({ ready: false, source: 'none', managed: {}, progress: { stage: 'idle', percent: 0 }, defaultDirectory: '' })
 const progress = ref({ stage: 'idle', received: 0, total: 0, percent: 0 })
 const error = ref('')
@@ -311,6 +311,15 @@ async function save() {
         <div class="section-heading"><div><h2>启动行为</h2><p>环境没有单独填写起始页时使用此地址。</p></div></div>
         <label for="startup-url">默认起始页</label>
         <input id="startup-url" v-model="form.defaultStartupUrl" placeholder="https://browserleaks.com/canvas" />
+      </section>
+
+      <section class="settings-section">
+        <div class="section-heading"><div><h2>应用行为</h2><p>关闭主窗口时选择是否继续驻留系统托盘。</p></div></div>
+        <label class="toggle-control settings-toggle">
+          <input id="run-background" data-smoke="run-background" v-model="form.runInBackground" type="checkbox" />
+          <span class="toggle-switch" aria-hidden="true"></span>
+          <span class="toggle-copy"><strong>关闭窗口后保持后台运行</strong><small>从系统托盘可以重新打开主窗口。</small></span>
+        </label>
       </section>
     </div>
   </div>

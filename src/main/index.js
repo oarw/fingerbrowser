@@ -1,4 +1,4 @@
-import { app, shell, BrowserWindow, clipboard, ipcMain, dialog, net, screen, session } from 'electron'
+import { app, shell, BrowserWindow, clipboard, ipcMain, dialog, Menu, net, screen, session, Tray } from 'electron'
 import { dirname, join, parse, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { randomUUID } from 'node:crypto'
@@ -16,6 +16,9 @@ let lastRunningSignature = ''
 let shutdownPromise = null
 let isQuitting = false
 let kernelManager = null
+let tray = null
+let runInBackground = false
+let allowWindowClose = false
 
 const gotSingleInstanceLock = app.requestSingleInstanceLock()
 
@@ -41,6 +44,53 @@ async function getRuntimeKernelStatus(configuredPath) {
     directory: kernelManager.baseDir,
     defaultDirectory: defaultKernelDirectory()
   }
+}
+
+function appIconPath() {
+  return app.isPackaged ? join(process.resourcesPath, 'icon.png') : join(__dirname, '../../build/icon.png')
+}
+
+function showMainWindow() {
+  if (!mainWindow || mainWindow.isDestroyed()) {
+    createWindow()
+    return
+  }
+  if (mainWindow.isMinimized()) mainWindow.restore()
+  mainWindow.show()
+  mainWindow.focus()
+}
+
+function ensureTray() {
+  if (tray) return tray
+  tray = new Tray(appIconPath())
+  tray.setToolTip('FingerBrowser')
+  tray.setContextMenu(
+    Menu.buildFromTemplate([
+      { label: '显示主窗口', click: showMainWindow },
+      { type: 'separator' },
+      { label: '退出 FingerBrowser', click: () => app.quit() }
+    ])
+  )
+  tray.on('click', showMainWindow)
+  return tray
+}
+
+function confirmRunningProfilesBeforeQuit() {
+  const count = runningIds().length
+  if (count === 0) return true
+  const options = {
+    type: 'warning',
+    buttons: ['取消', '关闭并退出'],
+    defaultId: 0,
+    cancelId: 0,
+    title: '仍有指纹环境正在运行',
+    message: `还有 ${count} 个指纹环境正在运行`,
+    detail: '关闭并退出会停止这些环境及其代理桥接。'
+  }
+  const choice = mainWindow && !mainWindow.isDestroyed()
+    ? dialog.showMessageBoxSync(mainWindow, options)
+    : dialog.showMessageBoxSync(options)
+  return choice === 1
 }
 
 const SMOKE_PROFILES = [
@@ -100,6 +150,10 @@ const SMOKE_PROFILES = [
 function shutdown() {
   if (!shutdownPromise) {
     shutdownPromise = Promise.all([stopAll(), kernelManager?.shutdown()]).finally(() => {
+      if (tray) {
+        tray.destroy()
+        tray = null
+      }
       shutdownPromise = null
     })
   }
@@ -107,9 +161,7 @@ function shutdown() {
 }
 
 function createWindow() {
-  const windowIcon = app.isPackaged
-    ? join(process.resourcesPath, 'icon.png')
-    : join(__dirname, '../../build/icon.png')
+  const windowIcon = appIconPath()
   mainWindow = new BrowserWindow({
     width: 1180,
     height: 760,
@@ -132,6 +184,22 @@ function createWindow() {
   })
 
   mainWindow.on('ready-to-show', () => mainWindow.show())
+  mainWindow.on('close', (event) => {
+    if (isQuitting) return
+    if (runInBackground) {
+      event.preventDefault()
+      ensureTray()
+      mainWindow.hide()
+      return
+    }
+    if (!allowWindowClose && runningIds().length > 0) {
+      if (!confirmRunningProfilesBeforeQuit()) {
+        event.preventDefault()
+        return
+      }
+      allowWindowClose = true
+    }
+  })
   mainWindow.on('closed', () => {
     mainWindow = null
   })
@@ -193,6 +261,10 @@ function createWindow() {
           `document.querySelector('[data-smoke="kernel-directory"]')?.value?.toLowerCase().endsWith('kernels')`
         )
         if (!kernelDirectoryConfigured) throw new Error('default kernel directory was not configured')
+        const backgroundSettingVisible = await mainWindow.webContents.executeJavaScript(
+          `Boolean(document.querySelector('[data-smoke="run-background"]'))`
+        )
+        if (!backgroundSettingVisible) throw new Error('background setting was not rendered')
         await capture(join(parsed.dir, `${parsed.name}-settings${parsed.ext}`))
         await click('kernel-log')
         await wait(300)
@@ -246,14 +318,12 @@ if (!gotSingleInstanceLock) {
   app.quit()
 } else {
   app.on('second-instance', () => {
-    if (!mainWindow || mainWindow.isDestroyed()) return
-    if (mainWindow.isMinimized()) mainWindow.restore()
-    mainWindow.show()
-    mainWindow.focus()
+    showMainWindow()
   })
 
   app.whenReady().then(async () => {
     const settings = await loadRuntimeSettings()
+    runInBackground = Boolean(settings.runInBackground)
     kernelManager = new KernelManager(settings.kernelDirectory, {
       fetch: (url, options) => net.fetch(url, options),
       resolveProxy: (url) => session.defaultSession.resolveProxy(url),
@@ -267,7 +337,7 @@ if (!gotSingleInstanceLock) {
     createWindow()
 
     app.on('activate', () => {
-      if (BrowserWindow.getAllWindows().length === 0) createWindow()
+      showMainWindow()
     })
   })
 }
@@ -278,6 +348,10 @@ app.on('window-all-closed', () => {
 
 app.on('before-quit', (event) => {
   if (isQuitting) return
+  if (!allowWindowClose && !confirmRunningProfilesBeforeQuit()) {
+    event.preventDefault()
+    return
+  }
   isQuitting = true
   event.preventDefault()
   void shutdown().finally(() => app.quit())
@@ -406,6 +480,7 @@ function registerIpc() {
       kernelDirectory: normalizeKernelDirectory(settings.kernelDirectory ?? current.kernelDirectory)
     }
     kernelManager.setBaseDir(next.kernelDirectory)
+    runInBackground = Boolean(next.runInBackground)
     await saveSettings(next)
     return next
   })

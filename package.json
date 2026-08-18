@@ -1,6 +1,6 @@
 {
   "name": "fingerbrowser",
-  "version": "0.2.1-pre.2",
+  "version": "0.2.1-pre.3",
   "description": "自研指纹浏览器管理器 - 基于内核级指纹 Chromium 的多环境管理工具",
   "author": "",
   "license": "MIT",

@@ -1,13 +1,16 @@
 import assert from 'node:assert/strict'
-import { access, mkdir, rm, writeFile } from 'node:fs/promises'
+import { execFile } from 'node:child_process'
+import { access, mkdir, rename, rm, writeFile } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { after, before, test } from 'node:test'
 import { createHash, randomUUID } from 'node:crypto'
+import { promisify } from 'node:util'
 import { Response } from 'undici'
-import { findChromeExecutable, KernelManager, MANAGED_KERNEL, sha256File } from '../src/main/kernelManager.js'
+import { expandZip, findChromeExecutable, KernelManager, MANAGED_KERNEL, sha256File } from '../src/main/kernelManager.js'
 
 const root = join(tmpdir(), `fingerbrowser-kernel-test-${randomUUID()}`)
+const execFileAsync = promisify(execFile)
 
 before(() => mkdir(root, { recursive: true }))
 after(() => rm(root, { recursive: true, force: true }))
@@ -31,6 +34,25 @@ test('findChromeExecutable locates chrome.exe below an archive root', async () =
   await mkdir(chromeDir, { recursive: true })
   await writeFile(join(chromeDir, 'chrome.exe'), '')
   assert.equal(await findChromeExecutable(archiveRoot), join(chromeDir, 'chrome.exe'))
+})
+
+test('expandZip extracts a valid archive with a .zip.part extension', { skip: process.platform !== 'win32' }, async () => {
+  const fixtureRoot = join(root, 'zip-part-fixture')
+  const source = join(fixtureRoot, 'source', 'chromium')
+  const zipPath = join(fixtureRoot, 'kernel.zip')
+  const partPath = `${zipPath}.part`
+  const destination = join(fixtureRoot, 'extracted')
+  await mkdir(source, { recursive: true })
+  await writeFile(join(source, 'chrome.exe'), 'test executable')
+
+  const script =
+    '& { param($source, $archive) Compress-Archive -Path (Join-Path $source "*") -DestinationPath $archive -Force }'
+  await execFileAsync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', script, dirname(source), zipPath])
+  await rename(zipPath, partPath)
+  await mkdir(destination, { recursive: true })
+
+  await expandZip(partPath, destination)
+  await access(join(destination, 'chromium', 'chrome.exe'))
 })
 
 test('KernelManager resumes, verifies, installs, and activates a managed kernel', async () => {

@@ -72,7 +72,7 @@ fingerbrowser/
 运行时数据存在 Electron 的 `userData` 目录(Windows:`%APPDATA%\fingerbrowser\`):
 
 - `profiles.json` — 所有环境配置(数组)
-- `settings.json` — 应用设置(`kernelPath`、`kernelDirectory`、`managedKernelVersion`、`defaultStartupUrl`)
+- `settings.json` — 应用设置(`kernelPath`、`kernelDirectory`、`managedKernelVersion`、`runInBackground`、`defaultStartupUrl`)
 - 托管内核目录 — 打包版默认位于软件安装目录下的 `kernels/`,可通过 `kernelDirectory` 改为其他位置;包含下载断点、安装元数据和 `install.log`
 - `profiles/<环境id>/` — 每个环境独立的浏览器数据目录(Cookie/缓存/存储,物理隔离)
 
@@ -177,6 +177,7 @@ npm run dist       # 构建 + electron-builder 打包到 release/
 ```
 
 - 首次使用应用会进入“内核与设置”页;点击“下载并安装”后自动完成下载、校验、解压和路径写入。
+- 设置页开启 `runInBackground` 后,关闭主窗口会驻留系统托盘;托盘退出或直接关闭窗口时,若仍有本应用启动的环境,会先提示确认并在确认后统一停止。
 - 当前固定内核:`148.0.7778.215` Windows x64 ZIP,SHA-256 `9ef3f471b7a6641b4224532522b29141ce3746e27d55788d88e2fd951f362579`。
 - 也可手动选择其他兼容内核;托管内核二进制不打进本应用安装包。
 
