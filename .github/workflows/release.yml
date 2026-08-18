@@ -111,6 +111,7 @@ jobs:
           - The fingerprint Chromium binary is not bundled in the installer. The app can download, verify, and install the pinned official build from Settings.
           - Profile notes are visible and editable from the main environment table.
           - The profile manager and editor now use a compact operations-focused layout without ads or commercial surfaces.
+          - An original app and installer icon plus a custom startup transition replace the Electron defaults.
           - The installer is not code-signed yet, so Windows SmartScreen may show an unknown publisher warning.
           - This is an MVP release without automated fingerprint-consistency guarantees.
           "@

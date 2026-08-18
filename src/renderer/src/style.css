@@ -220,18 +220,16 @@ label {
 }
 
 .launch-logo .fingerprint-line {
-  stroke-dasharray: 180;
-  stroke-dashoffset: 180;
-  opacity: 0.25;
-  animation: fingerprint-draw 650ms 120ms cubic-bezier(0.3, 0.7, 0.3, 1) forwards;
+  opacity: 0.55;
+  animation: fingerprint-reveal 520ms 80ms ease-out forwards;
 }
 
 .launch-logo .fingerprint-middle {
-  animation-delay: 210ms;
+  animation-delay: 150ms;
 }
 
 .launch-logo .fingerprint-inner {
-  animation-delay: 300ms;
+  animation-delay: 220ms;
 }
 
 .launch-identity strong {
@@ -283,9 +281,8 @@ label {
   }
 }
 
-@keyframes fingerprint-draw {
+@keyframes fingerprint-reveal {
   to {
-    stroke-dashoffset: 0;
     opacity: 1;
   }
 }
