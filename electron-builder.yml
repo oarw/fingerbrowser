@@ -19,8 +19,10 @@ win:
       arch:
         - x64
 nsis:
+  include: build/installer.nsh
   installerIcon: build/icon.ico
   uninstallerIcon: build/icon.ico
   oneClick: false
   allowToChangeInstallationDirectory: true
+  deleteAppDataOnUninstall: false
   perMachine: false

@@ -73,7 +73,7 @@ fingerbrowser/
 
 - `profiles.json` — 所有环境配置(数组)
 - `settings.json` — 应用设置(`kernelPath`、`kernelDirectory`、`managedKernelVersion`、`runInBackground`、`defaultStartupUrl`)
-- 托管内核目录 — 打包版默认位于软件安装目录下的 `kernels/`,可通过 `kernelDirectory` 改为其他位置;包含下载断点、安装元数据和 `install.log`
+- 托管内核目录 — 打包版默认位于安装目录同级的 `FingerBrowserData/kernels/`,可通过 `kernelDirectory` 改为其他位置;升级时会把旧版本程序目录下的 `kernels/` 自动迁移到该持久目录;包含下载断点、安装元数据和 `install.log`
 - `profiles/<环境id>/` — 每个环境独立的浏览器数据目录(Cookie/缓存/存储,物理隔离)
 
 > 删除环境时**不会**删除其 `profiles/<id>/` 目录,避免误删登录态。需要清理时手动删。

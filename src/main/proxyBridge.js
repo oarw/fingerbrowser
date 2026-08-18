@@ -115,10 +115,38 @@ function localLookup(address) {
   }
 }
 
+function summarizeFailure(stage, payload) {
+  const response = payload?.response
+  const error = payload?.error || (payload instanceof Error ? payload : null)
+  const statusCode = Number(response?.statusCode)
+  return {
+    stage,
+    ...(Number.isInteger(statusCode) ? { statusCode } : {}),
+    ...(response?.statusMessage ? { statusMessage: response.statusMessage } : {}),
+    ...(error?.code ? { code: error.code } : {}),
+    ...(error?.message ? { message: error.message } : {})
+  }
+}
+
+function observeServer(resource, server, stage) {
+  server.on('tunnelConnectFailed', (payload) => {
+    resource.failures.push(summarizeFailure(stage, payload))
+    resource.failures = resource.failures.slice(-8)
+  })
+  server.on('requestFailed', (payload) => {
+    resource.failures.push(summarizeFailure(stage, payload))
+    resource.failures = resource.failures.slice(-8)
+  })
+  server.on('tlsError', (payload) => {
+    resource.failures.push(summarizeFailure(stage, payload))
+    resource.failures = resource.failures.slice(-8)
+  })
+}
+
 export async function startBridge(key, proxy, options = {}) {
   await stopBridge(key)
   const { Server, createTunnel } = await loadProxyChain()
-  const resource = { server: null, systemRelay: null, tunnel: '', httpsAgent: null }
+  const resource = { server: null, systemRelay: null, tunnel: '', httpsAgent: null, failures: [] }
 
   try {
     let upstreamProxyUrl = buildUpstreamUrl(proxy)
@@ -126,6 +154,7 @@ export async function startBridge(key, proxy, options = {}) {
 
     if (systemProxyUrl) {
       resource.systemRelay = await createSystemRelay(systemProxyUrl)
+      observeServer(resource, resource.systemRelay, 'system')
       const relayUrl = `http://127.0.0.1:${resource.systemRelay.port}`
       resource.tunnel = await createTunnel(relayUrl, `${formatHost(proxy.host)}:${proxy.port}`, {
         hostname: '127.0.0.1'
@@ -155,6 +184,7 @@ export async function startBridge(key, proxy, options = {}) {
         ...(resource.httpsAgent ? { httpsAgent: resource.httpsAgent } : {})
       })
     })
+    observeServer(resource, resource.server, 'configured')
     await resource.server.listen()
     resource.url = `http://127.0.0.1:${resource.server.port}`
     bridges.set(key, resource)
@@ -169,9 +199,16 @@ export async function startSystemBridge(key, systemProxyUrl) {
   await stopBridge(key)
   if (!systemProxyUrl) return ''
   const server = await createSystemRelay(systemProxyUrl)
-  const resource = { server, url: `http://127.0.0.1:${server.port}` }
+  const resource = { server, url: `http://127.0.0.1:${server.port}`, failures: [] }
+  observeServer(resource, server, 'system')
   bridges.set(key, resource)
   return resource.url
+}
+
+export function getBridgeFailure(key) {
+  const resource = bridges.get(key)
+  if (!resource?.failures?.length) return null
+  return resource.failures[resource.failures.length - 1]
 }
 
 export async function stopBridge(key) {

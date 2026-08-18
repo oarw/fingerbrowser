@@ -116,7 +116,9 @@ jobs:
           - Profile manifest v1 records stable fingerprint, network, GeoIP, language, and timezone identity with pre-launch consistency checks.
           - Configured proxies can be chained after the Windows system proxy/V2Ray, with explicit HTTPS proxy certificate policy.
           - GeoIP detection uses bounded multi-provider fallback instead of depending on one endpoint.
+          - Proxy diagnostics now surface upstream CONNECT, authentication, and TLS failures instead of only bridge status codes.
           - Kernel downloads now use Electron's Chromium network stack so Windows system proxy settings are honored.
+          - Managed kernels now live in a persistent sibling data directory on the installation drive and migrate from the old replaceable app directory.
           - Kernel installation logs can be viewed, copied, opened, refreshed, and cleared from Settings.
           "@
 

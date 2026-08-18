@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { GEO_PROVIDERS, parseProviderData } from '../src/main/geo.js'
+import { describeBridgeFailure, GEO_PROVIDERS, parseProviderData } from '../src/main/geo.js'
 
 test('GeoIP fallback list contains the verified free providers', () => {
   assert.deepEqual(
@@ -39,4 +39,19 @@ test('GeoIP provider payloads normalize to one shape', () => {
     latitude: 40.7,
     longitude: -74
   })
+})
+
+test('proxy diagnostics explain HTTPS protocol and authentication failures', () => {
+  assert.match(
+    describeBridgeFailure({ type: 'https' }, { statusCode: 400 }),
+    /HTTPS 代理.*HTTP 400.*协议\/端口不匹配/
+  )
+  assert.match(
+    describeBridgeFailure({ type: 'http' }, { statusCode: 407 }),
+    /要求认证.*用户名和密码/
+  )
+  assert.match(
+    describeBridgeFailure({ type: 'https' }, { code: 'DEPTH_ZERO_SELF_SIGNED_CERT' }),
+    /跳过代理证书认证/
+  )
 })
