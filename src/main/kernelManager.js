@@ -96,7 +96,7 @@ export async function findChromeExecutable(root) {
   return ''
 }
 
-async function expandZip(archivePath, destination) {
+export async function expandZip(archivePath, destination) {
   const script =
     '& { param($archive, $destination) Add-Type -AssemblyName System.IO.Compression.FileSystem; [System.IO.Compression.ZipFile]::ExtractToDirectory($archive, $destination) }'
   await execFileAsync(
