@@ -27,7 +27,7 @@
 
 1. 打开本应用 → `内核与设置` → `下载并安装`。托管内核默认安装到软件安装目录下的 `kernels` 文件夹,也可在设置页改为其他目录。应用支持断点续传,并在 SHA-256 校验通过后自动解压和启用官方 Windows x64 内核。
 2. 也可以使用“手动内核”选择其他兼容的 `chrome.exe`。
-3. 新建环境(可一键随机生成指纹),填写代理、标签和备注后启动。
+3. 新建环境(可一键随机生成指纹),填写代理、标签和备注后启动。代理默认按“系统代理/V2Ray → 指定出口代理”串联,也可关闭系统代理前置。
 4. 在设置页开启“关闭窗口后保持后台运行”后,点击主窗口关闭按钮会缩到系统托盘;退出前如果仍有运行中的指纹环境,应用会先提示确认。
 
 > 内核二进制不打进 FingerBrowser 安装器,首次使用时由应用从固定的官方 GitHub Release 下载。当前固定版本为 `148.0.7778.215`,SHA-256 为 `9ef3f471b7a6641b4224532522b29141ce3746e27d55788d88e2fd951f362579`。
@@ -46,20 +46,13 @@
 | WebRTC 防泄漏 | `--disable-non-proxied-udp` |
 | 环境隔离 | `--user-data-dir` |
 
-> 带账号密码认证的代理或 SOCKS5 会自动经本地桥接(proxy-chain 在 127.0.0.1 起匿名代理携带凭据转发),浏览器只连本地端口。
+> HTTP、HTTPS、SOCKS5、认证代理和系统代理串联统一经本地桥接处理,浏览器只连接 127.0.0.1。出口检测会在多个免费 GeoIP 服务间自动回退并设置超时;“跳过代理证书认证”仅用于自签名代理证书,默认关闭。
 
 ## 开发 / 构建
 
 本项目的单测、Electron 启动截图、构建和打包全部在 GitHub Actions 上进行(见 `.github/workflows/build.yml`)。推送 `v*` 标签由 `.github/workflows/release.yml` 自动校验上游内核并发布 Release。
 
-本地开发(可选):
-
-```bash
-npm install
-npm run dev      # 启动开发环境
-npm run build    # 构建
-npm run dist     # 构建 + electron-builder 打包
-```
+本地工作区只做源码编辑和静态检查,不安装依赖、不执行测试或构建。单测、Electron 冒烟、构建、打包和发布均由 GitHub Actions 完成。
 
 技术栈:Electron + Vue 3 + Vite(electron-vite)。当前仅构建 Windows x64;macOS / Linux 按现阶段范围暂缓。
 
@@ -68,6 +61,7 @@ npm run dist     # 构建 + electron-builder 打包
 - [x] 阶段一 MVP:环境增删改查、独立隔离、指纹参数、一键启动
 - [x] 阶段二:SOCKS5/认证代理本地桥接、按代理 IP 自动填充时区语言、批量启动、窗口平铺
 - [x] 阶段三:内核内置下载/校验、主界面工作台重构、备注快捷管理、品牌图标与启动过渡、CI 启动冒烟
+- [x] 阶段四首批:profile manifest v1、出口 GeoIP 多源回退、IP 到时区/语言联动、启动前一致性检查、系统代理串联
 - [ ] 暂缓:本地 API/CDP-RPA、代理订阅、云同步、自动更新、macOS/Linux
 
 ## 许可

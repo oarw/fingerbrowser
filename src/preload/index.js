@@ -34,6 +34,7 @@ const api = {
   randomFingerprint: () => ipcRenderer.invoke('fingerprint:random'),
   randomSeed: () => ipcRenderer.invoke('fingerprint:random-seed'),
   fingerprintOptions: () => ipcRenderer.invoke('fingerprint:options'),
+  validateProfile: (profile) => ipcRenderer.invoke('profile:validate', profile),
   detectGeo: (proxy) => ipcRenderer.invoke('geo:detect', proxy),
 
   pickKernel: () => ipcRenderer.invoke('dialog:pick-kernel'),

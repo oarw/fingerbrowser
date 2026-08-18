@@ -45,10 +45,9 @@ export function buildArgs(profile, userDataDir, proxyServerUrl, windowBounds) {
   if (proxyServerUrl) {
     args.push(`--proxy-server=${proxyServerUrl}`)
   } else if (proxy && proxy.enabled && proxy.host && proxy.port) {
-    const scheme = proxy.type === 'socks5' ? 'socks5' : 'http'
+    const scheme = proxy.type === 'socks5' ? 'socks5' : proxy.type === 'https' ? 'https' : 'http'
     args.push(`--proxy-server=${scheme}://${proxy.host}:${proxy.port}`)
   }
-
   // 窗口平铺
   if (windowBounds) {
     args.push(`--window-position=${windowBounds.x},${windowBounds.y}`)
@@ -100,7 +99,7 @@ async function terminateChild(child) {
 }
 
 // 启动一个环境;onExit(id) 在进程退出时回调,用于通知渲染进程刷新状态
-export async function launch(profile, kernelPath, onExit, windowBounds) {
+export async function launch(profile, kernelPath, onExit, windowBounds, networkOptions = {}) {
   if (stoppingAll) throw new Error('应用正在退出，不能启动环境')
   try {
     if (!kernelPath) throw new Error()
@@ -118,10 +117,10 @@ export async function launch(profile, kernelPath, onExit, windowBounds) {
     const userDataDir = profileDataDir(profile.id)
     await mkdir(userDataDir, { recursive: true })
 
-    // 带认证 / SOCKS5 代理走本地桥接
+    // 认证、SOCKS5、HTTPS 或系统代理串联统一走本地桥接。
     let proxyServerUrl = ''
     if (needsBridge(profile.proxy)) {
-      proxyServerUrl = await startBridge(profile.id, profile.proxy)
+      proxyServerUrl = await startBridge(profile.id, profile.proxy, networkOptions)
     }
 
     if (stoppingAll) {
