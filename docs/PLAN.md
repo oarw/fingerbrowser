@@ -128,6 +128,15 @@ CI 状态:`v0.2.0` 已由 GitHub Actions 完成上游内核全量校验、单测
 
 - [用户提供的开源浏览器参考目录](https://docs.20020519.xyz/books/68554/page/202605) — 待逐条核验项目的源码、许可证、维护状态和可复用边界;不把目录中的宣传性结论直接当作技术事实。
 
+### 7.7 候选项目初步核验(2026-08-18)
+
+- [`Donut Browser`](https://github.com/zhom/donutbrowser) — README 标注 AGPL-3.0,采用 Tauri/React,包含隔离 Profile、代理、WireGuard、Local API 和 MCP;其 Wayfern 内核不是本项目可直接复用的开源 Chromium 内核,优先借鉴 Profile/API 边界和数据隔离设计。
+- [`GeekEZ Browser`](https://github.com/EchoHS/GeekezBrowser) — README 明确代码采用 PolyForm Noncommercial 1.0.0,品牌资产另有 CC BY-NC-SA 4.0,不能按普通 OSI 开源项目引入商业产品;可仅作 GeoIP 到时区/语言、WebRTC 阻断和代理编排的功能参考。
+- [`Simprint`](https://github.com/Simprint/simprint) — README 标注 AGPLv3,采用 Tauri 2 + React + Rust,包含环境、代理、Local API、自动化工作流和 MCP;重点研究其本地运行时与 API 分层,引入代码前单独评估 AGPL 义务。
+- [`VirtualBrowser`](https://github.com/Virtual-Browser/VirtualBrowser) — README 标注 BSD-3-Clause,覆盖 Chromium 环境隔离、按 IP 匹配语言/时区/地理位置、WebRTC、Canvas/WebGL、AudioContext、字体和硬件字段;需要继续审查实现代码和实际测试,不能只依据 README 功能表。
+
+> 上述许可证和能力判断以各项目当前 README/仓库元数据为准;页面中的星数、更新时间、检测“通过”与商业方案价格会变化,不作为本项目的长期事实或质量承诺。
+
 ## 八、待办小项(Backlog)
 
 - 地理位置经纬度注入(依赖后续 CDP 能力,当前暂缓)。
