@@ -90,16 +90,16 @@ CI 状态:`v0.2.0` 已由 GitHub Actions 完成上游内核全量校验、单测
 
 ### 7.1 当前取舍
 
-- 继续使用 `fingerprint-chromium` 作为当前生产内核,优先保证下载、校验、安装、启动和环境隔离稳定;不在短期内重写 Chromium 内核。
+- 继续使用 [`fingerprint-chromium`](https://github.com/adryfish/fingerprint-chromium) 作为当前生产内核,优先保证下载、校验、安装、启动和环境隔离稳定;不在短期内重写 Chromium 内核。
 - 后续自研目标定义为**隐私与环境一致性**:让每个环境对外呈现一套长期稳定、内部互相匹配的设备/地区画像,用于合法的多环境测试、隐私隔离和授权自动化。
 - 不以绕过验证码、风控或站点安全策略为验收目标;所有检测和回归只使用自有站点、明确授权的测试环境或公开的指纹诊断页。
 
 ### 7.2 开源方案调研结论
 
-- `fingerprint-chromium` 已提供 C++/内核级的种子、操作系统、品牌、CPU、语言、时区、WebRTC 等参数,适合作为 Chromium 路线的基础实现。
-- `Camoufox` 的思路是把修改放在浏览器实现层,配合 `BrowserForge` 按真实流量分布生成相关字段;它同时强调随机拼接不一致的 OS、GPU、屏幕和 UA 会产生异常信号,这对我们的画像模型有直接参考价值。
-- `Mullvad Browser`/Tor Browser 代表另一条路线:通过统一、可群体化的默认值减少唯一性,适合研究“隐私抗指纹”与“多画像隔离”之间的取舍。
-- `puppeteer-extra-plugin-stealth` 可作为自动化检测用的对照样本,但它主要依赖页面脚本层修补,不能替代 Chromium 内核级实现,也不作为生产内核的核心依赖。
+- [`fingerprint-chromium`](https://github.com/adryfish/fingerprint-chromium) 已提供 C++/内核级的种子、操作系统、品牌、CPU、语言、时区、WebRTC 等参数,适合作为 Chromium 路线的基础实现。
+- [`Camoufox`](https://github.com/daijro/camoufox) 的思路是把修改放在浏览器实现层,配合 [`BrowserForge`](https://github.com/daijro/browserforge) 按真实流量分布生成相关字段;它同时强调随机拼接不一致的 OS、GPU、屏幕和 UA 会产生异常信号,这对我们的画像模型有直接参考价值。
+- [`Mullvad Browser`](https://github.com/mullvad/mullvad-browser)/Tor Browser 代表另一条路线:通过统一、可群体化的默认值减少唯一性,适合研究“隐私抗指纹”与“多画像隔离”之间的取舍。
+- [`puppeteer-extra-plugin-stealth`](https://github.com/berstend/puppeteer-extra/tree/master/packages/puppeteer-extra-plugin-stealth) 可作为自动化检测用的对照样本,但它主要依赖页面脚本层修补,不能替代 Chromium 内核级实现,也不作为生产内核的核心依赖。
 
 ### 7.3 画像模型与 IP 联动
 
