@@ -1,12 +1,20 @@
 import { app, shell, BrowserWindow, clipboard, ipcMain, dialog, Menu, net, screen, session, Tray } from 'electron'
 import { dirname, join, parse, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { randomUUID } from 'node:crypto'
+import { createHash, randomUUID } from 'node:crypto'
 import { mkdir, writeFile } from 'node:fs/promises'
 import { loadProfiles, saveProfiles, loadSettings, saveSettings } from './store.js'
 import { launch, stop, stopAll, runningIds } from './launcher.js'
 import { randomFingerprint, randomSeed, OPTIONS } from './fingerprint.js'
 import { KernelManager, MANAGED_KERNEL } from './kernelManager.js'
+import { detectGeo } from './geo.js'
+import { parseSystemProxyResult } from './proxyBridge.js'
+import {
+  applyGeoToProfile,
+  geoConfirmation,
+  proxyIdentity,
+  withProfileManifest
+} from './profileManifest.js'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 
@@ -281,6 +289,10 @@ function createWindow() {
           `document.querySelector('.seed-summary strong')?.textContent?.trim() !== '未生成'`
         )
         if (!seedGenerated) throw new Error('profile editor did not generate a fingerprint seed')
+        const consistencyVisible = await mainWindow.webContents.executeJavaScript(
+          `Boolean(document.querySelector('[data-smoke="profile-consistency"]'))`
+        )
+        if (!consistencyVisible) throw new Error('profile consistency summary was not rendered')
         await capture(join(parsed.dir, `${parsed.name}-editor${parsed.ext}`))
         app.exit(0)
       } catch (error) {
@@ -381,31 +393,134 @@ function computeGrid(count) {
 
 const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
 
+async function resolveSystemProxyUrl() {
+  try {
+    const result = await Promise.race([
+      session.defaultSession.resolveProxy('https://ipinfo.io/json'),
+      delay(5000).then(() => {
+        throw new Error('系统代理解析超时')
+      })
+    ])
+    return parseSystemProxyResult(result)
+  } catch {
+    return ''
+  }
+}
+
+function consistencyError(validation) {
+  const blocking = validation.issues.filter((issue) => issue.severity === 'error')
+  return new Error(`环境一致性检查未通过: ${blocking.map((issue) => issue.message).join('；')}`)
+}
+
+async function saveProfileSnapshot(profile, { touchUpdatedAt = false } = {}) {
+  const profiles = await loadProfiles()
+  const index = profiles.findIndex((item) => item.id === profile.id)
+  if (index < 0) return
+  profiles[index] = {
+    ...profiles[index],
+    ...profile,
+    ...(touchUpdatedAt ? { updatedAt: Date.now() } : {})
+  }
+  await saveProfiles(profiles)
+}
+
+async function preflightGeo(profile, geoCache, systemProxyUrl = '') {
+  const prepared = withProfileManifest(profile)
+  const validation = prepared.manifest.consistency
+  if (validation.status === 'error') return { profile: prepared, validation }
+  if (!prepared.proxy.enabled) return { profile: prepared, validation }
+
+  const credentialKey = createHash('sha256')
+    .update(`${prepared.proxy.username}\u0000${prepared.proxy.password}`)
+    .digest('hex')
+  const key = `${proxyIdentity(prepared.proxy)}|${credentialKey}|${systemProxyUrl}`
+  if (!geoCache.has(key)) geoCache.set(key, detectGeo(prepared.proxy, { systemProxyUrl }))
+  try {
+    const geo = await geoCache.get(key)
+    const refreshed = withProfileManifest(prepared, { geo })
+    return {
+      profile: refreshed,
+      validation: refreshed.manifest.consistency,
+      geo,
+      confirmation: geoConfirmation(prepared, geo)
+    }
+  } catch (error) {
+    return { profile: prepared, validation, geoError: error }
+  }
+}
+
+function showGeoConfirmation(result, scope = '启动') {
+  if (result.validation.status === 'error') throw consistencyError(result.validation)
+  if (result.geoError) {
+    const choice = dialog.showMessageBoxSync(mainWindow, {
+      type: 'warning',
+      buttons: [`取消${scope}`, '仍然启动'],
+      defaultId: 0,
+      cancelId: 0,
+      title: '无法验证代理出口',
+      message: `GeoIP 检测失败，无法确认${scope}环境的出口地区`,
+      detail: result.geoError.message || String(result.geoError)
+    })
+    if (choice !== 1) throw new Error(`已取消${scope}`)
+    return result.profile
+  }
+  if (!result.confirmation?.required) return result.profile
+
+  const choice = dialog.showMessageBoxSync(mainWindow, {
+    type: 'warning',
+    buttons: [`取消${scope}`, '应用地区并启动'],
+    defaultId: 0,
+    cancelId: 0,
+    title: '代理出口画像发生变化',
+    message: `检测到${scope}环境的代理出口画像需要更新`,
+    detail: result.confirmation.reasons.join('、')
+  })
+  if (choice !== 1) throw new Error(`已取消${scope}`)
+  return applyGeoToProfile(result.profile, result.geo)
+}
+
 function registerIpc() {
   ipcMain.handle('profiles:list', async () => {
     const profiles = await loadProfiles()
-    if (process.env.FINGERBROWSER_SMOKE_TEST === '1' && profiles.length === 0) return SMOKE_PROFILES
-    return profiles
+    if (process.env.FINGERBROWSER_SMOKE_TEST === '1' && profiles.length === 0) {
+      return SMOKE_PROFILES.map((profile) => withProfileManifest(profile))
+    }
+    const migrated = profiles.map((profile) => withProfileManifest(profile))
+    if (profiles.some((profile, index) => profile.manifest?.schemaVersion !== migrated[index].manifest.schemaVersion)) {
+      await saveProfiles(migrated)
+    }
+    return migrated
   })
 
   ipcMain.handle('profiles:save', async (_e, profile) => {
     const profiles = await loadProfiles()
     const now = Date.now()
+    let savedProfile
     if (profile.id) {
       const idx = profiles.findIndex((p) => p.id === profile.id)
       if (idx >= 0) {
-        profiles[idx] = { ...profiles[idx], ...profile, updatedAt: now }
+        const merged = { ...profiles[idx], ...profile, updatedAt: now }
+        const prepared = withProfileManifest(merged, { previousManifest: profiles[idx].manifest })
+        if (prepared.manifest.consistency.status === 'error') throw consistencyError(prepared.manifest.consistency)
+        profiles[idx] = prepared
+        savedProfile = prepared
       } else {
-        profiles.push({ ...profile, updatedAt: now, createdAt: now })
+        const prepared = withProfileManifest({ ...profile, updatedAt: now, createdAt: now }, { now: new Date(now).toISOString() })
+        if (prepared.manifest.consistency.status === 'error') throw consistencyError(prepared.manifest.consistency)
+        profiles.push(prepared)
+        savedProfile = prepared
       }
     } else {
-      profile.id = randomUUID()
-      profile.createdAt = now
-      profile.updatedAt = now
-      profiles.push(profile)
+      const prepared = withProfileManifest(
+        { ...profile, id: randomUUID(), createdAt: now, updatedAt: now },
+        { now: new Date(now).toISOString() }
+      )
+      if (prepared.manifest.consistency.status === 'error') throw consistencyError(prepared.manifest.consistency)
+      profiles.push(prepared)
+      savedProfile = prepared
     }
     await saveProfiles(profiles)
-    return profile
+    return savedProfile
   })
 
   ipcMain.handle('profiles:delete', async (_e, id) => {
@@ -418,8 +533,18 @@ function registerIpc() {
     const profile = (await loadProfiles()).find((p) => p.id === id)
     if (!profile) throw new Error('环境不存在')
     const settings = await loadSettings()
-    const target = { ...profile, startupUrl: profile.startupUrl || settings.defaultStartupUrl }
-    const result = await launch(target, settings.kernelPath, () => scheduleRunningNotify())
+    const systemProxyUrl = await resolveSystemProxyUrl()
+    const preflight = await preflightGeo(profile, new Map(), systemProxyUrl)
+    const targetProfile = showGeoConfirmation(preflight)
+    await saveProfileSnapshot(targetProfile)
+    const target = { ...targetProfile, startupUrl: targetProfile.startupUrl || settings.defaultStartupUrl }
+    const result = await launch(
+      target,
+      settings.kernelPath,
+      () => scheduleRunningNotify(),
+      undefined,
+      { systemProxyUrl }
+    )
     notifyRunning()
     return result
   })
@@ -434,28 +559,66 @@ function registerIpc() {
       .filter(Boolean)
       .filter((p) => !runningSet.has(p.id))
 
-    const bounds = tile ? computeGrid(targets.length) : []
-    const results = Array(targets.length)
+    const geoCache = new Map()
+    const systemProxyUrl = await resolveSystemProxyUrl()
+    const preflight = await Promise.all(
+      targets.map((profile) => preflightGeo(profile, geoCache, systemProxyUrl))
+    )
+    const blocked = preflight.filter((item) => item.validation.status === 'error')
+    const changes = preflight.filter((item) => item.confirmation?.required)
+    const geoFailures = preflight.filter((item) => item.geoError)
+    if (blocked.length || changes.length || geoFailures.length) {
+      const choice = dialog.showMessageBoxSync(mainWindow, {
+        type: 'warning',
+        buttons: ['取消批量启动', '应用地区并启动可验证环境'],
+        defaultId: 0,
+        cancelId: 0,
+        title: '批量启动前需要确认',
+        message: `有 ${blocked.length + changes.length + geoFailures.length} 个环境需要处理`,
+        detail: [
+          blocked.length ? `${blocked.length} 个环境存在硬错误，将跳过` : '',
+          changes.length ? `${changes.length} 个环境的出口画像需要确认` : '',
+          geoFailures.length ? `${geoFailures.length} 个环境无法完成 GeoIP 检测，将跳过` : ''
+        ].filter(Boolean).join('；')
+      })
+      if (choice !== 1) return targets.map((target) => ({ id: target.id, ok: false, error: '已取消批量启动' }))
+    }
+
+    const preparedTargets = []
+    const preflightById = new Map(preflight.map((item) => [item.profile.id, item]))
+    for (const target of targets) {
+      const item = preflightById.get(target.id)
+      if (item.validation.status === 'error' || item.geoError) continue
+      const next = item.confirmation?.required ? applyGeoToProfile(item.profile, item.geo) : item.profile
+      await saveProfileSnapshot(next)
+      preparedTargets.push(next)
+    }
+
+    const bounds = tile ? computeGrid(preparedTargets.length) : []
+    const results = Array(targets.length).fill(null).map((_value, index) => ({ id: targets[index].id, ok: false, error: '未通过启动前检查' }))
     let nextIndex = 0
-    const workerCount = Math.min(2, targets.length)
+    const workerCount = Math.min(2, preparedTargets.length)
     const worker = async () => {
       while (true) {
         const i = nextIndex++
-        if (i >= targets.length) return
+        if (i >= preparedTargets.length) return
+        const target = preparedTargets[i]
+        const resultIndex = targets.findIndex((item) => item.id === target.id)
         try {
           await launch(
-            { ...targets[i], startupUrl: targets[i].startupUrl || settings.defaultStartupUrl },
+            { ...target, startupUrl: target.startupUrl || settings.defaultStartupUrl },
             settings.kernelPath,
             () => scheduleRunningNotify(),
-            tile ? bounds[i] : undefined
+            tile ? bounds[i] : undefined,
+            { systemProxyUrl }
           )
-          results[i] = { id: targets[i].id, ok: true }
+          results[resultIndex] = { id: target.id, ok: true }
         } catch (e) {
-          results[i] = { id: targets[i].id, ok: false, error: e.message || String(e) }
+          results[resultIndex] = { id: target.id, ok: false, error: e.message || String(e) }
         }
         scheduleRunningNotify()
         // 两路并发 + 短间隔，减少 CPU/磁盘尖峰，同时显著快于原先的单路 400ms。
-        if (nextIndex < targets.length) await delay(250)
+        if (nextIndex < preparedTargets.length) await delay(250)
       }
     }
     await Promise.all(Array.from({ length: workerCount }, worker))
@@ -534,10 +697,11 @@ function registerIpc() {
   ipcMain.handle('fingerprint:random', () => randomFingerprint())
   ipcMain.handle('fingerprint:random-seed', () => randomSeed())
   ipcMain.handle('fingerprint:options', () => OPTIONS)
+  ipcMain.handle('profile:validate', (_e, profile) => withProfileManifest(profile).manifest.consistency)
 
   ipcMain.handle('geo:detect', async (_e, proxy) => {
-    const { detectGeo } = await import('./geo.js')
-    return detectGeo(proxy)
+    const systemProxyUrl = proxy?.useSystemProxy !== false ? await resolveSystemProxyUrl() : ''
+    return detectGeo(proxy, { systemProxyUrl })
   })
 
   ipcMain.handle('dialog:pick-kernel', async () => {

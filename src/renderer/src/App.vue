@@ -112,7 +112,8 @@ function tagsOf(profile) {
 
 function proxyLabel(profile) {
   if (!profile.proxy?.enabled) return '本机网络'
-  return `${profile.proxy.type?.toUpperCase() || 'HTTP'} · ${profile.proxy.host || '未配置'}`
+  const route = profile.proxy.useSystemProxy !== false ? '系统 → ' : ''
+  return `${route}${profile.proxy.type?.toUpperCase() || 'HTTP'} · ${profile.proxy.host || '未配置'}`
 }
 
 function regionLabel(profile) {

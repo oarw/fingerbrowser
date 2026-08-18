@@ -125,7 +125,7 @@ fingerbrowser/
 | `timezone` | `--timezone` |
 | `language` / `acceptLanguages` | `--lang` / `--accept-lang` |
 | `webrtcMode != off` | `--disable-non-proxied-udp` |
-| 代理 | `--proxy-server`(无认证直连;认证/SOCKS5 走本地桥接) |
+| 代理 | `--proxy-server`(HTTP/HTTPS/SOCKS5、认证及系统代理串联统一由本地桥接处理) |
 | 环境隔离 | `--user-data-dir=<userData>/profiles/<id>` |
 | 平铺 | `--window-position=x,y` / `--window-size=w,h` |
 | 固定项 | `--no-first-run` `--no-default-browser-check` |
@@ -134,12 +134,13 @@ fingerbrowser/
 
 内核的 `--proxy-server` **不支持账号密码认证**,部分内核对 SOCKS5 兼容也不佳。因此:
 
-- `proxyBridge.js` 用 [`proxy-chain`](https://www.npmjs.com/package/proxy-chain) 在 `127.0.0.1` 起一个**匿名本地 HTTP 代理**,由它携带凭据转发到上游(HTTP 或 SOCKS5)。
+- `proxyBridge.js` 用 [`proxy-chain`](https://www.npmjs.com/package/proxy-chain) 在 `127.0.0.1` 起一个**匿名本地 HTTP 代理**,由它携带凭据转发到上游(HTTP、HTTPS 或 SOCKS5)。
 - 浏览器只连 `http://127.0.0.1:<随机端口>`,凭据不进命令行、不外泄。
-- 触发条件 `needsBridge()`:代理启用且(有用户名/密码,或类型是 SOCKS5)。无认证 HTTP 代理仍直连。
+- 默认链路为“浏览器 → 本地桥 → Windows 系统代理/V2Ray → 指定出口代理”;关闭 `useSystemProxy` 后才直接连接指定代理。
+- HTTPS 上游只在 `ignoreTlsErrors` 显式开启时跳过代理证书认证;不会把该设置扩大为忽略网站证书。
 - 生命周期:随环境进程启动而起、随退出而关(`launch`/`stop`/`stopAll` 里已串好)。
 
-`geo.js` 的"按代理 IP 填充"同理:临时经该代理请求 `ip-api.com`,拿到的就是**代理出口**的时区/国家,并按国家映射语言。
+`geo.js` 与浏览器共用相同链路,并在 IPinfo、IP123/IP234、IPRust、IP-API、IP2Location 间做有界回退;拿到**实际出口**时区/国家后按国家映射语言。
 
 ## 8. IPC API(渲染进程可用的 `window.api`)
 

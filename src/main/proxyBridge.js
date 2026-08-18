@@ -1,55 +1,187 @@
-// 本地代理桥接:fingerprint-chromium 的 --proxy-server 不支持账号密码认证,
-// 且部分内核对 SOCKS5 兼容不佳。这里用 proxy-chain 在 127.0.0.1 起一个匿名本地 HTTP 代理,
-// 由它携带凭据转发到上游(HTTP / SOCKS5)。浏览器只连本地端口,凭据不外泄。
-// profileId -> 本地代理 url(如 http://127.0.0.1:12345)
+import https from 'node:https'
+
+// Chromium 只连接 127.0.0.1 上的匿名 HTTP 代理。桥接层负责代理认证、SOCKS5、
+// HTTPS 上游证书策略，以及“系统代理 -> 指定出口代理”的串联。
 const bridges = new Map()
 let proxyChainPromise
 
-// 代理能力不是应用启动必需项。和 VS Code 延迟加载可选服务的思路一致，
-// 首次真正使用认证代理时才解析 proxy-chain 及其依赖。
 function loadProxyChain() {
   if (!proxyChainPromise) proxyChainPromise = import('proxy-chain')
   return proxyChainPromise
 }
 
-// 判断一个代理是否需要走本地桥接:带认证,或使用 SOCKS5
-export function needsBridge(proxy) {
-  if (!proxy || !proxy.enabled || !proxy.host || !proxy.port) return false
-  return Boolean(proxy.username || proxy.password || proxy.type === 'socks5')
+function formatHost(host) {
+  const value = String(host || '').trim()
+  return value.includes(':') && !value.startsWith('[') ? `[${value}]` : value
 }
 
-// 拼接上游代理 url(含凭据)
-export function buildUpstreamUrl(proxy) {
-  const scheme = proxy.type === 'socks5' ? 'socks5' : 'http'
+function proxyScheme(type) {
+  if (type === 'socks5') return 'socks5'
+  if (type === 'https') return 'https'
+  return 'http'
+}
+
+export function parseSystemProxyResult(value) {
+  const entries = String(value || '')
+    .split(';')
+    .map((entry) => entry.trim())
+    .filter(Boolean)
+
+  for (const entry of entries) {
+    const match = entry.match(/^(PROXY|HTTP|HTTPS|SOCKS|SOCKS4|SOCKS5)\s+(.+)$/i)
+    if (!match) continue
+    const [, kind, endpoint] = match
+    const scheme = {
+      PROXY: 'http',
+      HTTP: 'http',
+      HTTPS: 'https',
+      SOCKS: 'socks5',
+      SOCKS4: 'socks4',
+      SOCKS5: 'socks5'
+    }[kind.toUpperCase()]
+    return `${scheme}://${endpoint}`
+  }
+  return ''
+}
+
+export function needsBridge(proxy) {
+  if (!proxy?.enabled || !proxy.host || !proxy.port) return false
+  return Boolean(
+    proxy.useSystemProxy !== false ||
+    proxy.username ||
+    proxy.password ||
+    proxy.type === 'socks5' ||
+    proxy.type === 'https' ||
+    proxy.ignoreTlsErrors
+  )
+}
+
+export function buildUpstreamUrl(proxy, endpoint = {}) {
+  const scheme = proxyScheme(proxy?.type)
+  const host = formatHost(endpoint.host || proxy?.host)
+  const port = String(endpoint.port || proxy?.port || '').trim()
   let auth = ''
-  if (proxy.username || proxy.password) {
+  if (proxy?.username || proxy?.password) {
     auth = `${encodeURIComponent(proxy.username || '')}:${encodeURIComponent(proxy.password || '')}@`
   }
-  return `${scheme}://${auth}${proxy.host}:${proxy.port}`
+  return `${scheme}://${auth}${host}:${port}`
 }
 
-// 启动桥接,返回本地代理 url
-export async function startBridge(key, proxy) {
-  const { anonymizeProxy } = await loadProxyChain()
-  const upstream = buildUpstreamUrl(proxy)
-  const localUrl = await anonymizeProxy(upstream)
-  bridges.set(key, localUrl)
-  return localUrl
-}
-
-export async function stopBridge(key) {
-  const localUrl = bridges.get(key)
-  if (!localUrl) return
-  bridges.delete(key)
+async function closeResource(resource) {
+  if (!resource) return
   try {
-    const { closeAnonymizedProxy } = await loadProxyChain()
-    await closeAnonymizedProxy(localUrl, true)
+    await resource.server?.close(true)
   } catch {
     // ignore
   }
+  if (resource.tunnel) {
+    try {
+      const { closeTunnel } = await loadProxyChain()
+      await closeTunnel(resource.tunnel, true)
+    } catch {
+      // ignore
+    }
+  }
+  try {
+    await resource.systemRelay?.close(true)
+  } catch {
+    // ignore
+  }
+  resource.httpsAgent?.destroy()
+}
+
+async function createSystemRelay(systemProxyUrl) {
+  const { Server } = await loadProxyChain()
+  const server = new Server({
+    host: '127.0.0.1',
+    port: 0,
+    prepareRequestFunction: () => ({
+      requestAuthentication: false,
+      upstreamProxyUrl: systemProxyUrl
+    })
+  })
+  await server.listen()
+  return server
+}
+
+function localLookup(address) {
+  return (_hostname, options, callback) => {
+    if (typeof options === 'function') {
+      callback = options
+      options = {}
+    }
+    if (options?.all) callback(null, [{ address, family: 4 }])
+    else callback(null, address, 4)
+  }
+}
+
+export async function startBridge(key, proxy, options = {}) {
+  await stopBridge(key)
+  const { Server, createTunnel } = await loadProxyChain()
+  const resource = { server: null, systemRelay: null, tunnel: '', httpsAgent: null }
+
+  try {
+    let upstreamProxyUrl = buildUpstreamUrl(proxy)
+    const systemProxyUrl = proxy?.useSystemProxy !== false ? options.systemProxyUrl : ''
+
+    if (systemProxyUrl) {
+      resource.systemRelay = await createSystemRelay(systemProxyUrl)
+      const relayUrl = `http://127.0.0.1:${resource.systemRelay.port}`
+      resource.tunnel = await createTunnel(relayUrl, `${formatHost(proxy.host)}:${proxy.port}`, {
+        hostname: '127.0.0.1'
+      })
+      const tunnelPort = resource.tunnel.slice(resource.tunnel.lastIndexOf(':') + 1)
+
+      if (proxy.type === 'https') {
+        // 保留原始主机名用于 TLS SNI 和证书校验，但把 TCP 连接解析到本地隧道。
+        upstreamProxyUrl = buildUpstreamUrl(proxy, { host: proxy.host, port: tunnelPort })
+        resource.httpsAgent = new https.Agent({
+          keepAlive: true,
+          lookup: localLookup('127.0.0.1'),
+          rejectUnauthorized: !proxy.ignoreTlsErrors
+        })
+      } else {
+        upstreamProxyUrl = buildUpstreamUrl(proxy, { host: '127.0.0.1', port: tunnelPort })
+      }
+    }
+
+    resource.server = new Server({
+      host: '127.0.0.1',
+      port: 0,
+      prepareRequestFunction: () => ({
+        requestAuthentication: false,
+        upstreamProxyUrl,
+        ignoreUpstreamProxyCertificate: Boolean(proxy.ignoreTlsErrors),
+        ...(resource.httpsAgent ? { httpsAgent: resource.httpsAgent } : {})
+      })
+    })
+    await resource.server.listen()
+    resource.url = `http://127.0.0.1:${resource.server.port}`
+    bridges.set(key, resource)
+    return resource.url
+  } catch (error) {
+    await closeResource(resource)
+    throw error
+  }
+}
+
+export async function startSystemBridge(key, systemProxyUrl) {
+  await stopBridge(key)
+  if (!systemProxyUrl) return ''
+  const server = await createSystemRelay(systemProxyUrl)
+  const resource = { server, url: `http://127.0.0.1:${server.port}` }
+  bridges.set(key, resource)
+  return resource.url
+}
+
+export async function stopBridge(key) {
+  const resource = bridges.get(key)
+  if (!resource) return
+  bridges.delete(key)
+  await closeResource(resource)
 }
 
 export async function stopAllBridges() {
   const keys = [...bridges.keys()]
-  await Promise.all(keys.map((k) => stopBridge(k)))
+  await Promise.all(keys.map((key) => stopBridge(key)))
 }

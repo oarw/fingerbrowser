@@ -113,7 +113,9 @@ jobs:
           - The profile manager and editor now use a compact operations-focused layout without ads or commercial surfaces.
           - An original app and installer icon plus a custom startup transition replace the Electron defaults.
           - The installer is not code-signed yet, so Windows SmartScreen may show an unknown publisher warning.
-          - This is an MVP release without automated fingerprint-consistency guarantees.
+          - Profile manifest v1 records stable fingerprint, network, GeoIP, language, and timezone identity with pre-launch consistency checks.
+          - Configured proxies can be chained after the Windows system proxy/V2Ray, with explicit HTTPS proxy certificate policy.
+          - GeoIP detection uses bounded multi-provider fallback instead of depending on one endpoint.
           - Kernel downloads now use Electron's Chromium network stack so Windows system proxy settings are honored.
           - Kernel installation logs can be viewed, copied, opened, refreshed, and cleared from Settings.
           "@

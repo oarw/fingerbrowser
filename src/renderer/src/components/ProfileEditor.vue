@@ -1,7 +1,9 @@
 <script setup>
-import { computed, onMounted, reactive, ref, watch } from 'vue'
+import { computed, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
 import {
+  AlertTriangle,
   ArrowLeft,
+  CheckCircle2,
   Cpu,
   Globe2,
   Monitor,
@@ -44,8 +46,11 @@ function blank() {
       host: '',
       port: '',
       username: '',
-      password: ''
-    }
+      password: '',
+      useSystemProxy: true,
+      ignoreTlsErrors: false
+    },
+    manifest: { schemaVersion: 1, revision: 0, geo: null }
   }
 }
 
@@ -53,6 +58,11 @@ const form = reactive(blank())
 const platformVersions = ref([])
 const geoLoading = ref(false)
 const geoInfo = ref('')
+const geoStatus = ref('')
+const consistency = ref({ status: 'checking', issues: [] })
+
+let validationTimer = null
+let validationRequest = 0
 
 const summaryRegion = computed(() => {
   const timezone = form.fingerprint.timezone || ''
@@ -62,17 +72,56 @@ const summaryRegion = computed(() => {
 const summaryProxy = computed(() => {
   if (!form.proxy.enabled) return '本机网络'
   if (!form.proxy.host || !form.proxy.port) return '代理待完善'
-  return `${form.proxy.type.toUpperCase()} · ${form.proxy.host}:${form.proxy.port}`
+  const route = form.proxy.useSystemProxy ? '系统代理 → ' : ''
+  return `${route}${form.proxy.type.toUpperCase()} · ${form.proxy.host}:${form.proxy.port}`
 })
+
+const validationKey = computed(() => JSON.stringify({
+  fingerprint: form.fingerprint,
+  proxy: {
+    enabled: form.proxy.enabled,
+    type: form.proxy.type,
+    host: form.proxy.host,
+    port: form.proxy.port,
+    username: form.proxy.username,
+    useSystemProxy: form.proxy.useSystemProxy,
+    ignoreTlsErrors: form.proxy.ignoreTlsErrors
+  },
+  geo: form.manifest?.geo || null
+}))
+
+const consistencyLabel = computed(() => ({
+  ready: '画像一致',
+  warning: '需要确认',
+  error: '存在错误',
+  checking: '正在检查'
+})[consistency.value.status] || '正在检查')
+
+const manifestRevision = computed(() => form.manifest?.revision ? `R${form.manifest.revision}` : '待保存')
+
+function formatCheckedAt(value) {
+  if (!value) return '未记录时间'
+  const date = new Date(value)
+  return Number.isNaN(date.getTime()) ? value : date.toLocaleString('zh-CN', { hour12: false })
+}
 
 onMounted(async () => {
   if (props.profile) {
-    Object.assign(form, JSON.parse(JSON.stringify(props.profile)))
+    const source = JSON.parse(JSON.stringify(props.profile))
+    Object.assign(form, source)
+    form.proxy = { ...blank().proxy, ...(source.proxy || {}) }
+    form.fingerprint = { ...blank().fingerprint, ...(source.fingerprint || {}) }
     if (!form.tags) form.tags = ''
     if (Array.isArray(form.tags)) form.tags = form.tags.join(', ')
+    if (!form.manifest) form.manifest = { schemaVersion: 1, revision: 0, geo: null }
   } else {
     await randomizeAll()
   }
+  await validateConsistency()
+})
+
+onUnmounted(() => {
+  if (validationTimer) clearTimeout(validationTimer)
 })
 
 watch(
@@ -82,6 +131,27 @@ watch(
   },
   { immediate: true }
 )
+
+watch(validationKey, () => {
+  if (validationTimer) clearTimeout(validationTimer)
+  validationTimer = setTimeout(() => void validateConsistency(), 140)
+})
+
+async function validateConsistency() {
+  const request = ++validationRequest
+  try {
+    const result = await window.api.validateProfile(JSON.parse(JSON.stringify(form)))
+    if (request === validationRequest) consistency.value = result
+    return result
+  } catch (error) {
+    const result = {
+      status: 'error',
+      issues: [{ code: 'VALIDATION_FAILED', severity: 'error', message: error.message || String(error) }]
+    }
+    if (request === validationRequest) consistency.value = result
+    return result
+  }
+}
 
 async function randomizeAll() {
   const fingerprint = await window.api.randomFingerprint()
@@ -101,24 +171,32 @@ function applyLocale(locale) {
 async function detectGeo() {
   geoLoading.value = true
   geoInfo.value = ''
+  geoStatus.value = ''
   try {
     const geo = await window.api.detectGeo(JSON.parse(JSON.stringify(form.proxy)))
     form.fingerprint.timezone = geo.timezone
     form.fingerprint.language = geo.language
     form.fingerprint.acceptLanguages = geo.acceptLanguages
-    geoInfo.value = `出口 ${geo.ip} · ${geo.country} · ${geo.timezone}`
+    form.manifest = { ...(form.manifest || {}), geo }
+    const route = geo.systemProxy ? '系统代理 → 指定代理' : '指定代理直连'
+    geoInfo.value = `出口 ${geo.ip} · ${geo.country} · ${geo.timezone} · ${geo.source} · ${route}`
+    geoStatus.value = 'success'
+    await validateConsistency()
   } catch (error) {
-    geoInfo.value = `查询失败:${error.message || String(error)}`
+    geoInfo.value = `查询失败：${error.message || String(error)}`
+    geoStatus.value = 'error'
   } finally {
     geoLoading.value = false
   }
 }
 
-function submit() {
+async function submit() {
   if (!form.name.trim()) {
     alert('请填写环境名称')
     return
   }
+  const validation = await validateConsistency()
+  if (validation.status === 'error') return
   const payload = JSON.parse(JSON.stringify(form))
   payload.tags = String(form.tags || '')
     .split(',')
@@ -158,13 +236,22 @@ function submit() {
           </div>
 
           <div v-if="form.proxy.enabled" class="form-grid proxy-grid">
-            <div><label for="proxy-type">代理类型</label><select id="proxy-type" v-model="form.proxy.type"><option value="http">HTTP / HTTPS</option><option value="socks5">SOCKS5</option></select></div>
+            <div><label for="proxy-type">代理类型</label><select id="proxy-type" v-model="form.proxy.type"><option value="http">HTTP</option><option value="https">HTTPS</option><option value="socks5">SOCKS5</option></select></div>
             <div><label for="proxy-host">主机</label><input id="proxy-host" v-model="form.proxy.host" placeholder="127.0.0.1" /></div>
             <div><label for="proxy-port">端口</label><input id="proxy-port" v-model="form.proxy.port" placeholder="7890" /></div>
             <div><label for="proxy-user">用户名</label><input id="proxy-user" v-model="form.proxy.username" autocomplete="off" /></div>
             <div><label for="proxy-password">密码</label><input id="proxy-password" v-model="form.proxy.password" type="password" autocomplete="new-password" /></div>
-            <div class="geo-action"><button class="btn-secondary" type="button" :disabled="geoLoading" @click="detectGeo"><Globe2 :size="16" />{{ geoLoading ? '正在检测' : '按出口 IP 匹配地区' }}</button></div>
-            <div v-if="geoInfo" class="full inline-message">{{ geoInfo }}</div>
+            <div class="geo-action"><button class="btn-secondary" type="button" :disabled="geoLoading" @click="detectGeo"><Globe2 :size="16" />{{ geoLoading ? '正在检测（最多 13 秒）' : '检测出口 IP' }}</button></div>
+            <div class="full proxy-options">
+              <label class="setting-toggle"><input v-model="form.proxy.useSystemProxy" type="checkbox" /><span></span><strong>先经系统代理 / V2Ray</strong></label>
+              <label class="setting-toggle warning-toggle"><input v-model="form.proxy.ignoreTlsErrors" type="checkbox" /><span></span><strong>跳过代理证书认证</strong></label>
+            </div>
+            <div v-if="geoInfo" class="full inline-message" :class="geoStatus">{{ geoInfo }}</div>
+            <div v-if="form.manifest?.geo" class="full geo-manifest">
+              <div><strong>{{ form.manifest.geo.country || form.manifest.geo.countryCode }} · {{ form.manifest.geo.ip }}</strong><span>{{ form.manifest.geo.language }} · {{ form.manifest.geo.acceptLanguages }}</span></div>
+              <small>{{ form.manifest.geo.timezone }} · {{ form.manifest.geo.source }} · {{ formatCheckedAt(form.manifest.geo.checkedAt) }}</small>
+            </div>
+            <small class="full geo-attribution">GeoIP：IPinfo、IP123/IP234、IPRust、IP-API；FingerBrowser 使用 <a href="https://www.ip2location.io" target="_blank" rel="noreferrer">IP2Location.io IP geolocation</a> web service。</small>
           </div>
           <div v-else class="disabled-section"><Network :size="20" /><span>当前环境使用本机网络。</span></div>
         </section>
@@ -196,6 +283,18 @@ function submit() {
           <div><dt><Globe2 :size="15" />地区</dt><dd>{{ summaryRegion }} · {{ form.fingerprint.language }}</dd></div>
           <div><dt><Network :size="15" />网络</dt><dd>{{ summaryProxy }}</dd></div>
         </dl>
+        <div class="consistency-panel" :class="consistency.status" data-smoke="profile-consistency">
+          <div class="consistency-heading">
+            <CheckCircle2 v-if="consistency.status === 'ready'" :size="17" />
+            <AlertTriangle v-else :size="17" />
+            <strong>{{ consistencyLabel }}</strong>
+            <span>Manifest v1 · {{ manifestRevision }}</span>
+          </div>
+          <p v-if="consistency.status === 'ready'">地区、语言、时区与网络设置相互匹配。</p>
+          <ul v-else-if="consistency.issues.length">
+            <li v-for="issue in consistency.issues.slice(0, 4)" :key="issue.code" :class="issue.severity">{{ issue.message }}</li>
+          </ul>
+        </div>
         <div class="seed-summary"><span>指纹种子</span><strong>{{ form.fingerprint.seed || '未生成' }}</strong></div>
         <button class="btn-secondary summary-random" type="button" @click="randomizeAll"><Shuffle :size="16" />重新生成整套指纹</button>
       </aside>
