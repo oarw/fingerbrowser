@@ -3,14 +3,19 @@ import { computed, onMounted, onUnmounted, reactive, ref } from 'vue'
 import {
   AlertTriangle,
   ArrowLeft,
+  Check,
   CheckCircle2,
+  Copy,
   Download,
   ExternalLink,
   FileSearch,
+  FileText,
   FolderOpen,
   HardDriveDownload,
   PauseCircle,
-  Save
+  RefreshCw,
+  Save,
+  Trash2
 } from 'lucide-vue-next'
 
 const emit = defineEmits(['close', 'saved'])
@@ -20,8 +25,14 @@ const status = ref({ ready: false, source: 'none', managed: {}, progress: { stag
 const progress = ref({ stage: 'idle', received: 0, total: 0, percent: 0 })
 const error = ref('')
 const saving = ref(false)
+const logOpen = ref(false)
+const logLoading = ref(false)
+const installLog = reactive({ path: '', text: '' })
+const logFeedback = ref('')
 
 let unsubscribe = null
+let feedbackTimer = null
+let lastProgressStage = 'idle'
 
 const isInstalling = computed(() => ['downloading', 'verifying', 'extracting'].includes(progress.value.stage))
 const progressLabel = computed(() => {
@@ -50,7 +61,12 @@ function formatBytes(value) {
 }
 
 onMounted(async () => {
-  unsubscribe = window.api.onKernelProgress((next) => (progress.value = next))
+  unsubscribe = window.api.onKernelProgress((next) => {
+    const stageChanged = next.stage !== lastProgressStage
+    lastProgressStage = next.stage
+    progress.value = next
+    if (logOpen.value && stageChanged) void refreshLog()
+  })
   const [settings, nextStatus] = await Promise.all([window.api.getSettings(), window.api.getKernelStatus()])
   Object.assign(form, settings)
   status.value = nextStatus
@@ -59,13 +75,66 @@ onMounted(async () => {
 
 onUnmounted(() => {
   if (unsubscribe) unsubscribe()
+  if (feedbackTimer) clearTimeout(feedbackTimer)
 })
+
+function setLogFeedback(message) {
+  logFeedback.value = message
+  if (feedbackTimer) clearTimeout(feedbackTimer)
+  feedbackTimer = setTimeout(() => (logFeedback.value = ''), 2400)
+}
+
+async function refreshLog() {
+  logLoading.value = true
+  try {
+    Object.assign(installLog, await window.api.getKernelLog())
+  } catch (logError) {
+    setLogFeedback(logError.message || String(logError))
+  } finally {
+    logLoading.value = false
+  }
+}
+
+async function showLog() {
+  logOpen.value = true
+  await refreshLog()
+}
+
+async function toggleLog() {
+  logOpen.value = !logOpen.value
+  if (logOpen.value) await refreshLog()
+}
+
+async function copyLog() {
+  await window.api.copyKernelLog()
+  setLogFeedback('已复制')
+}
+
+async function openLogFile() {
+  const errorMessage = await window.api.openKernelLog()
+  if (errorMessage) setLogFeedback(`打开失败: ${errorMessage}`)
+}
+
+async function clearLog() {
+  if (!window.confirm('清空所有安装日志? 此操作无法撤销。')) return
+  Object.assign(installLog, await window.api.clearKernelLog())
+  setLogFeedback('日志已清空')
+}
 
 async function install() {
   if (status.value.source === 'managed') return
   error.value = ''
   try {
-    const nextStatus = await window.api.installKernel()
+    const result = await window.api.installKernel()
+    if (!result.ok) {
+      progress.value = result.progress || progress.value
+      if (progress.value.stage !== 'paused') {
+        error.value = result.error || '内核安装失败'
+        await showLog()
+      }
+      return
+    }
+    const nextStatus = result.status
     status.value = nextStatus
     progress.value = nextStatus.progress
     form.kernelPath = nextStatus.configuredPath
@@ -73,6 +142,7 @@ async function install() {
     emit('saved', nextStatus)
   } catch (installError) {
     error.value = installError.message || String(installError)
+    await showLog()
   }
 }
 
@@ -158,11 +228,32 @@ async function save() {
           </div>
         </div>
 
-        <div v-if="error" class="error-message"><AlertTriangle :size="16" />{{ error }}</div>
+        <div v-if="error" class="error-message kernel-error-message">
+          <AlertTriangle :size="16" />
+          <span>{{ error }}</span>
+          <button class="text-button" @click="showLog">查看日志</button>
+        </div>
 
         <div class="kernel-actions">
           <button class="btn-secondary" @click="openDirectory"><FolderOpen :size="16" />打开内核目录</button>
+          <button class="btn-secondary" data-smoke="kernel-log" :aria-expanded="logOpen" @click="toggleLog"><FileText :size="16" />{{ logOpen ? '收起安装日志' : '查看安装日志' }}</button>
           <button class="text-button" @click="openSource"><ExternalLink :size="14" />官方来源 · BSD-3-Clause</button>
+        </div>
+
+        <div v-if="logOpen" class="install-log-panel">
+          <div class="install-log-header">
+            <div class="install-log-title"><FileText :size="16" /><strong>安装日志</strong></div>
+            <div class="install-log-tools">
+              <span v-if="logFeedback" class="install-log-feedback"><Check :size="13" />{{ logFeedback }}</span>
+              <button class="icon-button compact" title="刷新日志" aria-label="刷新日志" :disabled="logLoading" @click="refreshLog"><RefreshCw :size="15" :class="{ spinning: logLoading }" /></button>
+              <button class="icon-button compact" title="复制日志" aria-label="复制日志" :disabled="!installLog.text" @click="copyLog"><Copy :size="15" /></button>
+              <button class="icon-button compact" title="打开日志文件" aria-label="打开日志文件" @click="openLogFile"><ExternalLink :size="15" /></button>
+              <button class="icon-button compact danger" title="清空日志" aria-label="清空日志" :disabled="!installLog.text" @click="clearLog"><Trash2 :size="15" /></button>
+            </div>
+          </div>
+          <pre v-if="installLog.text" class="install-log-viewer">{{ installLog.text }}</pre>
+          <div v-else class="install-log-empty">暂无安装日志</div>
+          <div class="install-log-path" :title="installLog.path">{{ installLog.path }}</div>
         </div>
       </section>
 

@@ -1,4 +1,4 @@
-import { app, shell, BrowserWindow, ipcMain, dialog, screen } from 'electron'
+import { app, shell, BrowserWindow, clipboard, ipcMain, dialog, net, screen, session } from 'electron'
 import { dirname, join, parse } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { randomUUID } from 'node:crypto'
@@ -166,6 +166,13 @@ function createWindow() {
         await click('settings')
         await wait(500)
         await capture(join(parsed.dir, `${parsed.name}-settings${parsed.ext}`))
+        await click('kernel-log')
+        await wait(300)
+        const installLogVisible = await mainWindow.webContents.executeJavaScript(
+          `Boolean(document.querySelector('.install-log-panel') && document.querySelector('.install-log-viewer, .install-log-empty'))`
+        )
+        if (!installLogVisible) throw new Error('kernel install log panel did not open')
+        await capture(join(parsed.dir, `${parsed.name}-settings-log${parsed.ext}`))
         await click('profiles')
         await wait(100)
         await click('create')
@@ -218,7 +225,11 @@ if (!gotSingleInstanceLock) {
   })
 
   app.whenReady().then(() => {
-    kernelManager = new KernelManager(join(app.getPath('userData'), 'kernels'))
+    kernelManager = new KernelManager(join(app.getPath('userData'), 'kernels'), {
+      fetch: (url, options) => net.fetch(url, options),
+      resolveProxy: (url) => session.defaultSession.resolveProxy(url),
+      networkLabel: 'Electron net.fetch (Chromium network stack)'
+    })
     kernelManager.onProgress((progress) => {
       if (!mainWindow || mainWindow.isDestroyed() || mainWindow.webContents.isDestroyed()) return
       mainWindow.webContents.send('kernel:progress', progress)
@@ -369,19 +380,38 @@ function registerIpc() {
   })
 
   ipcMain.handle('kernel:install', async () => {
-    const kernelPath = await kernelManager.install()
-    const settings = await loadSettings()
-    await saveSettings({
-      ...settings,
-      kernelPath,
-      managedKernelVersion: MANAGED_KERNEL.version
-    })
-    return kernelManager.getStatus(kernelPath)
+    try {
+      const kernelPath = await kernelManager.install()
+      const settings = await loadSettings()
+      await saveSettings({
+        ...settings,
+        kernelPath,
+        managedKernelVersion: MANAGED_KERNEL.version
+      })
+      return { ok: true, status: await kernelManager.getStatus(kernelPath) }
+    } catch (error) {
+      return {
+        ok: false,
+        error: error.message || String(error),
+        progress: kernelManager.progress
+      }
+    }
   })
 
   ipcMain.handle('kernel:cancel', () => kernelManager.cancel())
   ipcMain.handle('kernel:open-directory', () => shell.openPath(kernelManager.baseDir))
   ipcMain.handle('kernel:open-source', () => shell.openExternal(MANAGED_KERNEL.sourceUrl))
+  ipcMain.handle('kernel:get-log', () => kernelManager.getLog())
+  ipcMain.handle('kernel:clear-log', () => kernelManager.clearLog())
+  ipcMain.handle('kernel:copy-log', async () => {
+    const log = await kernelManager.getLog()
+    clipboard.writeText(log.text)
+    return true
+  })
+  ipcMain.handle('kernel:open-log', async () => {
+    const path = await kernelManager.ensureLogFile()
+    return shell.openPath(path)
+  })
 
   ipcMain.handle('fingerprint:random', () => randomFingerprint())
   ipcMain.handle('fingerprint:random-seed', () => randomSeed())

@@ -75,4 +75,48 @@ test('KernelManager resumes, verifies, installs, and activates a managed kernel'
   assert.equal(status.source, 'managed')
   assert.equal(status.managed.version, kernel.version)
   assert.equal(status.managed.path, executable)
+
+  const log = await manager.getLog()
+  assert.match(log.text, /开始安装内核/)
+  assert.match(log.text, /内核安装完成/)
+})
+
+test('KernelManager preserves network error causes in the install log', async () => {
+  const baseDir = join(root, 'network-error')
+  const connectionError = Object.assign(new Error('connect ECONNREFUSED 127.0.0.1:10808'), {
+    code: 'ECONNREFUSED',
+    address: '127.0.0.1',
+    port: 10808
+  })
+  const fetchError = new TypeError('fetch failed')
+  fetchError.cause = connectionError
+
+  const manager = new KernelManager(baseDir, {
+    platform: 'win32',
+    kernel: {
+      version: 'test-network-error',
+      label: 'Test Chromium',
+      archiveName: 'test-network-error.zip',
+      downloadUrl: 'https://example.test/test-network-error.zip',
+      size: 1,
+      sha256: '0'.repeat(64),
+      sourceUrl: 'https://example.test/source'
+    },
+    networkLabel: 'test network stack',
+    resolveProxy: async () => 'PROXY 127.0.0.1:10808',
+    fetch: async () => {
+      throw fetchError
+    }
+  })
+
+  await assert.rejects(manager.install(), /ECONNREFUSED/)
+  assert.equal(manager.progress.stage, 'error')
+
+  const log = await manager.getLog()
+  assert.match(log.text, /PROXY 127\.0\.0\.1:10808/)
+  assert.match(log.text, /ECONNREFUSED/)
+  assert.match(log.text, /connect ECONNREFUSED 127\.0\.0\.1:10808/)
+
+  const cleared = await manager.clearLog()
+  assert.equal(cleared.text, '')
 })

@@ -21,6 +21,10 @@ const api = {
   cancelKernelInstall: () => ipcRenderer.invoke('kernel:cancel'),
   openKernelDirectory: () => ipcRenderer.invoke('kernel:open-directory'),
   openKernelSource: () => ipcRenderer.invoke('kernel:open-source'),
+  getKernelLog: () => ipcRenderer.invoke('kernel:get-log'),
+  clearKernelLog: () => ipcRenderer.invoke('kernel:clear-log'),
+  copyKernelLog: () => ipcRenderer.invoke('kernel:copy-log'),
+  openKernelLog: () => ipcRenderer.invoke('kernel:open-log'),
   onKernelProgress: (cb) => {
     const listener = (_e, progress) => cb(progress)
     ipcRenderer.on('kernel:progress', listener)
