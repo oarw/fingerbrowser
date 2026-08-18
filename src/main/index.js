@@ -92,7 +92,7 @@ function createWindow() {
     autoHideMenuBar: true,
     backgroundColor: '#eef3f5',
     webPreferences: {
-      preload: join(__dirname, '../preload/index.js'),
+      preload: join(__dirname, '../preload/index.mjs'),
       nodeIntegration: false,
       contextIsolation: true,
       // 当前 preload 使用 ESM + externalizeDepsPlugin，迁移到 sandbox 需要先改为单 bundle。
@@ -133,16 +133,31 @@ function createWindow() {
           const wait = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds))
           const parsed = parse(screenshotPath)
 
+          const hasBridge = await mainWindow.webContents.executeJavaScript(
+            `Boolean(window.api && typeof window.api.listProfiles === 'function')`
+          )
+          if (!hasBridge) throw new Error('preload bridge window.api is unavailable')
+
           await click('profiles')
-          await wait(300)
+          await wait(500)
+          const profileRows = await mainWindow.webContents.executeJavaScript(
+            `document.querySelectorAll('.profile-table tbody tr').length`
+          )
+          if (profileRows !== SMOKE_PROFILES.length) {
+            throw new Error(`profile workspace rendered ${profileRows} rows; expected ${SMOKE_PROFILES.length}`)
+          }
           await capture(screenshotPath)
           await click('settings')
-          await wait(300)
+          await wait(500)
           await capture(join(parsed.dir, `${parsed.name}-settings${parsed.ext}`))
           await click('profiles')
           await wait(100)
           await click('create')
-          await wait(300)
+          await wait(500)
+          const seedGenerated = await mainWindow.webContents.executeJavaScript(
+            `document.querySelector('.seed-summary strong')?.textContent?.trim() !== '未生成'`
+          )
+          if (!seedGenerated) throw new Error('profile editor did not generate a fingerprint seed')
           await capture(join(parsed.dir, `${parsed.name}-editor${parsed.ext}`))
           app.exit(0)
         } catch (error) {

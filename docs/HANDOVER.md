@@ -225,3 +225,5 @@ gh repo edit oarw/fingerbrowser --visibility private --accept-visibility-change-
 - `proxy-chain` 和地理查询按需加载;首屏 IPC 请求并发执行;UUID 使用 Node 原生 `randomUUID`。
 
 窗口已启用 `contextIsolation`、关闭 `nodeIntegration`,并使用 V8 代码缓存。预加载仍暂时设置 `sandbox:false`,因为当前 ESM 预加载依赖外部化构建;迁移到 Electron sandbox 时需要先将 preload 改为单 bundle,再在 CI 做完整构建验证。
+
+> `electron-vite` 会把 `src/preload/index.js` 构建为 `out/preload/index.mjs`;`BrowserWindow.webPreferences.preload` 必须指向这个 `.mjs` 产物。Actions 冒烟会断言 `window.api`、样例列表和随机指纹均已真实加载,防止只渲染静态空壳。
