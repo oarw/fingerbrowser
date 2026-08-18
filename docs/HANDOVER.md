@@ -9,6 +9,7 @@
 它负责"内核下载校验 + 多环境管理 + 隔离 + 启动";指纹伪装交给一个**内核级指纹 Chromium**。应用固定官方 Windows ZIP 的版本、大小和 SHA-256,在用户点击后下载并安装;也保留手动内核路径。后续可能研究和维护自己的指纹补丁栈。
 
 - 仓库:`https://github.com/oarw/fingerbrowser`(私有)
+- 当前正式版本:`v0.2.0`(GitHub Actions 自动构建与发布)
 - 技术栈:Electron + Vue 3 + Vite(经由 electron-vite)
 - 目标平台:当前仅构建 Windows x64;macOS / Linux 暂缓
 
@@ -204,11 +205,11 @@ gh repo edit oarw/fingerbrowser --visibility private --accept-visibility-change-
 
 - **内核不随安装包分发**:应用已提供一键下载和校验,但首次使用仍需要约 190 MB 网络下载。这样避免安装包膨胀,也便于独立审计内核来源。
 - **GPU/WebGL 元数据伪装在 Windows 上受限**:内核 README 说明 WebGL 厂商/型号自定义目前主要面向 Linux,Windows 下 GPU 指纹可能有瑕疵(BrowserScan 可能标记)。
-- **地理位置(经纬度)未注入**:目前只填时区/语言;若要伪装 `geolocation`,需通过 CDP 覆盖(阶段三)。
+- **地理位置(经纬度)未注入**:目前只填时区/语言;若要伪装 `geolocation`,需通过后续 CDP 能力覆盖。
 - **平铺仅在启动时生效**:窗口位置/大小由启动参数决定,启动后未做进程级窗口管理(那需要调用系统窗口 API)。
 - **测试仍不完整**:已有内核下载恢复/校验/安装测试和真实 Electron 四界面冒烟,但尚无完整渲染交互测试及指纹检测站点回归。
 - **提交作者邮箱是占位符** `oarw@users.noreply.github.com`(未改动全局 git 配置)。如需真实邮箱请告知。
-- 反检测强度参考:该内核 CreepJS 约 51.5%,可过 Cloudflare Turnstile;实际防关联仍强依赖**干净的独立代理 IP**。
+- 不要把某一次 CreepJS、BrowserLeaks 或 Turnstile 结果当成长期保证;实际防关联仍强依赖**干净的独立代理 IP**、跨层参数一致性和稳定使用行为。
 
 ## 12. 快速上手接手者清单
 
