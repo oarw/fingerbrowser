@@ -61,8 +61,8 @@ jobs:
           npx electron .
           if ($LASTEXITCODE -ne 0) { throw "Electron smoke test exited with $LASTEXITCODE" }
           $screenshots = @(Get-ChildItem -LiteralPath artifacts -File -Filter 'ui-*.png')
-          if ($screenshots.Count -ne 10) {
-            throw "Electron smoke test created $($screenshots.Count) screenshots; expected 10"
+          if ($screenshots.Count -ne 11) {
+            throw "Electron smoke test created $($screenshots.Count) screenshots; expected 11"
           }
 
       - name: Upload smoke screenshot
@@ -111,6 +111,7 @@ jobs:
           - The fingerprint Chromium binary is not bundled in the installer. The app can download, verify, and install the pinned official build from Settings.
           - Profile notes are visible and editable from the main environment table.
           - The profile manager and editor now use a compact operations-focused layout without ads or commercial surfaces.
+          - The profile table prioritizes network details and supports adaptive or persisted drag-resizable column widths.
           - An original app and installer icon plus a custom startup transition replace the Electron defaults.
           - The installer is not code-signed yet, so Windows SmartScreen may show an unknown publisher warning.
           - Profile manifest v2 records stable fingerprint, proxy health, network, GeoIP, language, and timezone identity with pre-launch consistency checks.

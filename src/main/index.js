@@ -311,7 +311,36 @@ function createWindow() {
         if (profileRows !== SMOKE_PROFILES.length) {
           throw new Error(`profile workspace rendered ${profileRows} rows; expected ${SMOKE_PROFILES.length}`)
         }
+        await click('table-layout-auto')
+        await wait(50)
         await capture(screenshotPath)
+        const columnResizeResult = await mainWindow.webContents.executeJavaScript(`(async () => {
+          const manualButton = document.querySelector('[data-smoke="table-layout-manual"]')
+          if (!manualButton) return null
+          manualButton.click()
+          await new Promise((resolve) => requestAnimationFrame(resolve))
+          const table = document.querySelector('.profile-table')
+          const handle = document.querySelector('[data-smoke="network-column-resize"]')
+          const networkHeader = table?.querySelector('th:nth-child(4)')
+          if (!table?.classList.contains('is-manual') || !handle || !networkHeader) return null
+          const before = Math.round(networkHeader.getBoundingClientRect().width)
+          const startX = Math.round(handle.getBoundingClientRect().left)
+          handle.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, clientX: startX }))
+          window.dispatchEvent(new PointerEvent('pointermove', { bubbles: true, clientX: startX + 36 }))
+          window.dispatchEvent(new PointerEvent('pointerup', { bubbles: true, clientX: startX + 36 }))
+          await new Promise((resolve) => requestAnimationFrame(resolve))
+          return {
+            before,
+            after: Math.round(networkHeader.getBoundingClientRect().width),
+            handles: table.querySelectorAll('.column-resize-handle').length
+          }
+        })()`)
+        if (!columnResizeResult || columnResizeResult.handles !== 7 || columnResizeResult.after <= columnResizeResult.before) {
+          throw new Error(`table columns were not freely resizable: ${JSON.stringify(columnResizeResult)}`)
+        }
+        await capture(join(parsed.dir, `${parsed.name}-table-manual${parsed.ext}`))
+        await click('table-layout-auto')
+        await wait(100)
         await click('proxy-library')
         await wait(200)
         const proxyLibraryReady = await mainWindow.webContents.executeJavaScript(
