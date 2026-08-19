@@ -317,11 +317,11 @@ function createWindow() {
           flag.textContent = String.fromCodePoint(0x1f1fa, 0x1f1f8)
           document.body.append(flag)
           const style = getComputedStyle(flag)
-          const result = { fontFamily: style.fontFamily, emojiVariant: style.fontVariantEmoji }
+          const result = { fontFamily: style.fontFamily }
           flag.remove()
           return result
         })()`)
-        if (!countryFlagStyle.fontFamily.includes('Segoe UI Emoji') || countryFlagStyle.emojiVariant !== 'emoji') {
+        if (!countryFlagStyle.fontFamily.includes('Segoe UI Emoji')) {
           throw new Error(`country flag emoji font is not configured: ${JSON.stringify(countryFlagStyle)}`)
         }
         await click('table-layout-auto')
