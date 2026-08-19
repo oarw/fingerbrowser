@@ -52,7 +52,7 @@
 
 ## 开发 / 构建
 
-本项目的单测、Electron 启动截图、构建和打包全部在 GitHub Actions 上进行(见 `.github/workflows/build.yml`)。推送 `v*` 标签由 `.github/workflows/release.yml` 自动校验上游内核并发布 Release。
+本项目的单测、Electron 启动截图、构建、打包和发版全部在 GitHub Actions 上进行(见 `.github/workflows/build.yml`)。每次 `main` 构建成功后会根据已有标签自动递增未占用版本，稳定版发布正式 Release，`-pre.N` 发布 Pre-release，并上传 Windows 安装包与 SHA-256 校验文件。推送 `v*` 标签仍可由 `.github/workflows/release.yml` 执行包含固定内核校验的正式发布流程。
 
 本地工作区只做源码编辑和静态检查,不安装依赖、不执行测试或构建。单测、Electron 冒烟、构建、打包和发布均由 GitHub Actions 完成。
 
