@@ -3,6 +3,7 @@ import { computed, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
 import {
   AlertTriangle,
   ArrowLeft,
+  BookmarkPlus,
   CheckCircle2,
   Cpu,
   Globe2,
@@ -11,14 +12,17 @@ import {
   Save,
   ShieldCheck,
   Shuffle,
-  Tags
+  Tags,
+  Trash2
 } from 'lucide-vue-next'
 
 const props = defineProps({
   profile: { type: Object, default: null },
-  options: { type: Object, required: true }
+  options: { type: Object, required: true },
+  templates: { type: Array, default: () => [] },
+  proxyEntries: { type: Array, default: () => [] }
 })
-const emit = defineEmits(['close', 'save'])
+const emit = defineEmits(['close', 'save', 'save-template', 'delete-template'])
 
 function blank() {
   return {
@@ -50,7 +54,11 @@ function blank() {
       useSystemProxy: true,
       ignoreTlsErrors: false
     },
-    manifest: { schemaVersion: 1, revision: 0, geo: null }
+    startupPolicy: {
+      ipChangeAction: 'ask',
+      proxyFailureAction: 'ask'
+    },
+    manifest: { schemaVersion: 2, revision: 0, geo: null, proxyHealth: null }
   }
 }
 
@@ -60,6 +68,8 @@ const geoLoading = ref(false)
 const geoInfo = ref('')
 const geoStatus = ref('')
 const consistency = ref({ status: 'checking', issues: [] })
+const selectedTemplateId = ref('')
+const selectedProxyEntryId = ref('')
 
 let validationTimer = null
 let validationRequest = 0
@@ -111,9 +121,10 @@ onMounted(async () => {
     Object.assign(form, source)
     form.proxy = { ...blank().proxy, ...(source.proxy || {}) }
     form.fingerprint = { ...blank().fingerprint, ...(source.fingerprint || {}) }
+    form.startupPolicy = { ...blank().startupPolicy, ...(source.startupPolicy || {}) }
     if (!form.tags) form.tags = ''
     if (Array.isArray(form.tags)) form.tags = form.tags.join(', ')
-    if (!form.manifest) form.manifest = { schemaVersion: 1, revision: 0, geo: null }
+    if (!form.manifest) form.manifest = { schemaVersion: 2, revision: 0, geo: null, proxyHealth: null }
   } else {
     await randomizeAll()
   }
@@ -168,6 +179,44 @@ function applyLocale(locale) {
   form.fingerprint.timezone = locale.timezone
 }
 
+function applyTemplate() {
+  const template = props.templates.find((item) => item.id === selectedTemplateId.value)
+  if (!template) return
+  const source = JSON.parse(JSON.stringify(template.profile || {}))
+  const currentName = form.name
+  const currentSeed = form.fingerprint.seed
+  Object.assign(form, {
+    ...blank(),
+    ...source,
+    id: '',
+    name: currentName,
+    fingerprint: { ...blank().fingerprint, ...(source.fingerprint || {}), seed: currentSeed },
+    proxy: { ...blank().proxy, ...(source.proxy || {}) },
+    startupPolicy: { ...blank().startupPolicy, ...(source.startupPolicy || {}) },
+    manifest: { ...blank().manifest, ...(source.manifest || {}) }
+  })
+  form.tags = Array.isArray(source.tags) ? source.tags.join(', ') : source.tags || ''
+  selectedProxyEntryId.value = ''
+}
+
+function applyProxyEntry() {
+  const entry = props.proxyEntries.find((item) => item.id === selectedProxyEntryId.value)
+  if (!entry) return
+  form.proxy = { ...blank().proxy, ...JSON.parse(JSON.stringify(entry.proxy)) }
+  form.manifest = { ...(form.manifest || {}), geo: null, proxyHealth: null }
+}
+
+function removeSelectedTemplate() {
+  const template = props.templates.find((item) => item.id === selectedTemplateId.value)
+  if (!template) return
+  emit('delete-template', template)
+  selectedTemplateId.value = ''
+}
+
+function requestSaveTemplate() {
+  emit('save-template', JSON.parse(JSON.stringify(form)))
+}
+
 async function detectGeo() {
   geoLoading.value = true
   geoInfo.value = ''
@@ -178,11 +227,16 @@ async function detectGeo() {
     form.fingerprint.language = geo.language
     form.fingerprint.acceptLanguages = geo.acceptLanguages
     form.manifest = { ...(form.manifest || {}), geo }
+    form.manifest.proxyHealth = { status: 'available', checkedAt: new Date().toISOString(), error: '' }
     const route = geo.systemProxy ? '系统代理 → 指定代理' : '指定代理直连'
     geoInfo.value = `出口 ${geo.ip} · ${geo.country} · ${geo.timezone} · ${geo.source} · ${route}`
     geoStatus.value = 'success'
     await validateConsistency()
   } catch (error) {
+    form.manifest = {
+      ...(form.manifest || {}),
+      proxyHealth: { status: 'unavailable', checkedAt: new Date().toISOString(), error: error.message || String(error) }
+    }
     geoInfo.value = `查询失败：${error.message || String(error)}`
     geoStatus.value = 'error'
   } finally {
@@ -213,13 +267,26 @@ async function submit() {
         <button class="icon-button" title="返回环境列表" aria-label="返回环境列表" @click="emit('close')"><ArrowLeft :size="19" /></button>
         <div><p class="eyebrow">{{ form.id ? '环境配置' : '新建环境' }}</p><h1>{{ form.id ? form.name || '编辑环境' : '创建浏览器环境' }}</h1></div>
       </div>
-      <button class="btn-primary" @click="submit"><Save :size="16" />{{ form.id ? '保存更改' : '创建环境' }}</button>
+      <div class="header-actions">
+        <button class="btn-secondary" type="button" @click="requestSaveTemplate"><BookmarkPlus :size="16" />保存为模板</button>
+        <button class="btn-primary" @click="submit"><Save :size="16" />{{ form.id ? '保存更改' : '创建环境' }}</button>
+      </div>
     </header>
 
     <div class="editor-content">
       <div class="editor-form">
         <section class="form-section">
           <div class="section-heading"><div><h2>基础信息</h2><p>用于在环境列表中识别和检索账号。</p></div></div>
+          <div v-if="!form.id" class="template-picker">
+            <div>
+              <label for="profile-template">环境模板</label>
+              <select id="profile-template" v-model="selectedTemplateId" @change="applyTemplate">
+                <option value="">不使用模板</option>
+                <option v-for="template in templates" :key="template.id" :value="template.id">{{ template.name }}</option>
+              </select>
+            </div>
+            <button v-if="selectedTemplateId" class="icon-button danger" type="button" title="删除所选模板" aria-label="删除所选模板" @click="removeSelectedTemplate"><Trash2 :size="16" /></button>
+          </div>
           <div class="form-grid">
             <div><label for="profile-name">环境名称 *</label><input id="profile-name" v-model="form.name" placeholder="例如 Amazon-US-01" /></div>
             <div><label for="profile-group">分组</label><input id="profile-group" v-model="form.group" placeholder="例如 电商主账号" /></div>
@@ -236,6 +303,13 @@ async function submit() {
           </div>
 
           <div v-if="form.proxy.enabled" class="form-grid proxy-grid">
+            <div class="full saved-proxy-picker">
+              <label for="saved-proxy">从代理库选择</label>
+              <select id="saved-proxy" v-model="selectedProxyEntryId" @change="applyProxyEntry">
+                <option value="">手动配置</option>
+                <option v-for="entry in proxyEntries" :key="entry.id" :value="entry.id">{{ entry.name }} · {{ entry.proxy.host }}:{{ entry.proxy.port }}</option>
+              </select>
+            </div>
             <div><label for="proxy-type">代理类型</label><select id="proxy-type" v-model="form.proxy.type"><option value="http">HTTP</option><option value="https">HTTPS</option><option value="socks5">SOCKS5</option></select></div>
             <div><label for="proxy-host">主机</label><input id="proxy-host" v-model="form.proxy.host" placeholder="127.0.0.1" /></div>
             <div><label for="proxy-port">端口</label><input id="proxy-port" v-model="form.proxy.port" placeholder="7890" /></div>
@@ -245,6 +319,10 @@ async function submit() {
             <div class="full proxy-options">
               <label class="setting-toggle"><input v-model="form.proxy.useSystemProxy" type="checkbox" /><span></span><strong>先经系统代理 / V2Ray</strong></label>
               <label class="setting-toggle warning-toggle"><input v-model="form.proxy.ignoreTlsErrors" type="checkbox" /><span></span><strong>跳过代理证书认证</strong></label>
+            </div>
+            <div class="full startup-policy-grid">
+              <div><label for="ip-change-action">出口画像变化</label><select id="ip-change-action" v-model="form.startupPolicy.ipChangeAction"><option value="ask">提醒后确认</option><option value="block">阻止启动</option><option value="auto">自动更新地区</option></select></div>
+              <div><label for="proxy-failure-action">代理 IP 不可用</label><select id="proxy-failure-action" v-model="form.startupPolicy.proxyFailureAction"><option value="ask">询问是否使用系统代理</option><option value="block">阻止启动</option><option value="system">自动使用系统代理</option></select></div>
             </div>
             <div v-if="geoInfo" class="full inline-message" :class="geoStatus">{{ geoInfo }}</div>
             <div v-if="form.manifest?.geo" class="full geo-manifest">
@@ -288,7 +366,7 @@ async function submit() {
             <CheckCircle2 v-if="consistency.status === 'ready'" :size="17" />
             <AlertTriangle v-else :size="17" />
             <strong>{{ consistencyLabel }}</strong>
-            <span>Manifest v1 · {{ manifestRevision }}</span>
+            <span>Manifest v{{ form.manifest?.schemaVersion || 2 }} · {{ manifestRevision }}</span>
           </div>
           <p v-if="consistency.status === 'ready'">地区、语言、时区与网络设置相互匹配。</p>
           <ul v-else-if="consistency.issues.length">

@@ -3,13 +3,25 @@ import { dirname, join, parse, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { createHash, randomUUID } from 'node:crypto'
 import { mkdir, writeFile } from 'node:fs/promises'
-import { loadProfiles, saveProfiles, loadSettings, saveSettings } from './store.js'
+import { freemem, totalmem } from 'node:os'
+import {
+  loadProfiles,
+  saveProfiles,
+  loadSettings,
+  saveSettings,
+  loadTemplates,
+  saveTemplates,
+  loadProxyLibrary,
+  saveProxyLibrary
+} from './store.js'
 import { launch, stop, stopAll, runningIds } from './launcher.js'
 import { randomFingerprint, randomSeed, OPTIONS } from './fingerprint.js'
 import { KernelManager, MANAGED_KERNEL } from './kernelManager.js'
 import { migrateLegacyKernelDirectory } from './kernelMigration.js'
 import { detectGeo } from './geo.js'
 import { parseSystemProxyResult } from './proxyBridge.js'
+import { normalizeStartupPolicy, runtimeWithSystemProxy } from './launchPolicy.js'
+import { assessLaunchMemory, formatMemory } from './memoryGuard.js'
 import {
   applyGeoToProfile,
   geoConfirmation,
@@ -514,6 +526,59 @@ function consistencyError(validation) {
   return new Error(`环境一致性检查未通过: ${blocking.map((issue) => issue.message).join('；')}`)
 }
 
+function confirmLaunchMemory(count, scope = '启动') {
+  const assessment = assessLaunchMemory(freemem(), totalmem(), count)
+  if (assessment.ok) return true
+  const choice = dialog.showMessageBoxSync(mainWindow, {
+    type: 'warning',
+    buttons: [`取消${scope}`, '仍然启动'],
+    defaultId: 0,
+    cancelId: 0,
+    title: '可用内存可能不足',
+    message: `${scope} ${count} 个环境可能超出当前可用内存`,
+    detail: `当前可用 ${formatMemory(assessment.availableBytes)}；建议至少保留 ${formatMemory(assessment.reserveBytes)} 给系统，并为待启动环境预留 ${formatMemory(assessment.browserBudgetBytes)}。`
+  })
+  return choice === 1
+}
+
+function templateSnapshot(profile) {
+  const fingerprint = { ...(profile?.fingerprint || {}) }
+  delete fingerprint.seed
+  const tags = Array.isArray(profile?.tags)
+    ? [...profile.tags]
+    : String(profile?.tags || '')
+      .split(',')
+      .map((tag) => tag.trim())
+      .filter(Boolean)
+  return {
+    group: profile?.group || '',
+    tags,
+    remark: '',
+    startupUrl: profile?.startupUrl || '',
+    fingerprint,
+    proxy: { ...(profile?.proxy || {}) },
+    startupPolicy: normalizeStartupPolicy(profile?.startupPolicy),
+    manifest: {
+      geo: profile?.manifest?.geo || null,
+      proxyHealth: profile?.manifest?.proxyHealth || null
+    }
+  }
+}
+
+function normalizedLibraryProxy(value = {}) {
+  const type = ['http', 'https', 'socks5'].includes(value.type) ? value.type : 'http'
+  return {
+    enabled: true,
+    type,
+    host: String(value.host || '').trim(),
+    port: String(value.port || '').trim(),
+    username: String(value.username || '').trim(),
+    password: typeof value.password === 'string' ? value.password : '',
+    useSystemProxy: value.useSystemProxy !== false,
+    ignoreTlsErrors: Boolean(value.ignoreTlsErrors)
+  }
+}
+
 async function saveProfileSnapshot(profile, { touchUpdatedAt = false } = {}) {
   const profiles = await loadProfiles()
   const index = profiles.findIndex((item) => item.id === profile.id)
@@ -539,7 +604,10 @@ async function preflightGeo(profile, geoCache, systemProxyUrl = '') {
   if (!geoCache.has(key)) geoCache.set(key, detectGeo(prepared.proxy, { systemProxyUrl }))
   try {
     const geo = await geoCache.get(key)
-    const refreshed = withProfileManifest(prepared, { geo })
+    const refreshed = withProfileManifest(prepared, {
+      geo,
+      proxyHealth: { status: 'available', checkedAt: new Date().toISOString(), error: '' }
+    })
     return {
       profile: refreshed,
       validation: refreshed.manifest.consistency,
@@ -547,38 +615,59 @@ async function preflightGeo(profile, geoCache, systemProxyUrl = '') {
       confirmation: geoConfirmation(prepared, geo)
     }
   } catch (error) {
-    return { profile: prepared, validation, geoError: error }
+    const unavailable = withProfileManifest(prepared, {
+      proxyHealth: {
+        status: 'unavailable',
+        checkedAt: new Date().toISOString(),
+        error: error.message || String(error)
+      }
+    })
+    return { profile: unavailable, validation: unavailable.manifest.consistency, geoError: error }
   }
 }
 
-function showGeoConfirmation(result, scope = '启动') {
+function resolveSinglePreflight(result, scope = '启动') {
   if (result.validation.status === 'error') throw consistencyError(result.validation)
+  const policy = normalizeStartupPolicy(result.profile.startupPolicy)
   if (result.geoError) {
+    if (policy.proxyFailureAction === 'block') throw new Error('代理检测失败，已按环境策略阻止启动')
+    if (policy.proxyFailureAction === 'ask') {
+      const choice = dialog.showMessageBoxSync(mainWindow, {
+        type: 'warning',
+        buttons: [`取消${scope}`, '使用系统代理启动'],
+        defaultId: 0,
+        cancelId: 0,
+        title: '代理 IP 不可用',
+        message: `无法验证${scope}环境的指定代理`,
+        detail: `${result.geoError.message || String(result.geoError)}\n\n继续后仅本次启动改用系统代理，不会覆盖原代理配置。`
+      })
+      if (choice !== 1) throw new Error(`已取消${scope}`)
+    }
+    return {
+      storedProfile: result.profile,
+      runtimeProfile: runtimeWithSystemProxy(result.profile),
+      forceSystemProxy: true
+    }
+  }
+  if (!result.confirmation?.required) {
+    return { storedProfile: result.profile, runtimeProfile: result.profile, forceSystemProxy: false }
+  }
+
+  if (policy.ipChangeAction === 'block') throw new Error('代理出口画像发生变化，已按环境策略阻止启动')
+  if (policy.ipChangeAction === 'ask') {
     const choice = dialog.showMessageBoxSync(mainWindow, {
       type: 'warning',
-      buttons: [`取消${scope}`, '仍然启动'],
+      buttons: [`取消${scope}`, '应用地区并启动'],
       defaultId: 0,
       cancelId: 0,
-      title: '无法验证代理出口',
-      message: `GeoIP 检测失败，无法确认${scope}环境的出口地区`,
-      detail: result.geoError.message || String(result.geoError)
+      title: '代理出口画像发生变化',
+      message: `检测到${scope}环境的代理出口画像需要更新`,
+      detail: result.confirmation.reasons.join('、')
     })
     if (choice !== 1) throw new Error(`已取消${scope}`)
-    return result.profile
   }
-  if (!result.confirmation?.required) return result.profile
-
-  const choice = dialog.showMessageBoxSync(mainWindow, {
-    type: 'warning',
-    buttons: [`取消${scope}`, '应用地区并启动'],
-    defaultId: 0,
-    cancelId: 0,
-    title: '代理出口画像发生变化',
-    message: `检测到${scope}环境的代理出口画像需要更新`,
-    detail: result.confirmation.reasons.join('、')
-  })
-  if (choice !== 1) throw new Error(`已取消${scope}`)
-  return applyGeoToProfile(result.profile, result.geo)
+  const applied = applyGeoToProfile(result.profile, result.geo)
+  return { storedProfile: applied, runtimeProfile: applied, forceSystemProxy: false }
 }
 
 function registerIpc() {
@@ -631,21 +720,121 @@ function registerIpc() {
     return true
   })
 
+  ipcMain.handle('profiles:duplicate', async (_e, id) => {
+    const profiles = await loadProfiles()
+    const source = profiles.find((profile) => profile.id === id)
+    if (!source) throw new Error('环境不存在')
+    const now = Date.now()
+    const duplicate = withProfileManifest({
+      ...source,
+      id: randomUUID(),
+      name: `${source.name} 副本`,
+      fingerprint: { ...(source.fingerprint || {}), seed: randomSeed() },
+      manifest: {
+        geo: source.manifest?.geo || null,
+        proxyHealth: source.manifest?.proxyHealth || null
+      },
+      createdAt: now,
+      updatedAt: now
+    }, { now: new Date(now).toISOString() })
+    profiles.push(duplicate)
+    await saveProfiles(profiles)
+    return duplicate
+  })
+
+  ipcMain.handle('templates:list', () => loadTemplates())
+  ipcMain.handle('templates:save', async (_e, name, profile) => {
+    const title = String(name || '').trim()
+    if (!title) throw new Error('模板名称不能为空')
+    const templates = await loadTemplates()
+    const now = Date.now()
+    const template = {
+      id: randomUUID(),
+      name: title,
+      profile: templateSnapshot(profile),
+      createdAt: now,
+      updatedAt: now
+    }
+    templates.push(template)
+    await saveTemplates(templates)
+    return template
+  })
+  ipcMain.handle('templates:delete', async (_e, id) => {
+    const templates = (await loadTemplates()).filter((template) => template.id !== id)
+    await saveTemplates(templates)
+    return true
+  })
+
+  ipcMain.handle('proxy-library:list', () => loadProxyLibrary())
+  ipcMain.handle('proxy-library:save', async (_e, entry) => {
+    const name = String(entry?.name || '').trim()
+    const proxy = normalizedLibraryProxy(entry?.proxy)
+    if (!name) throw new Error('代理名称不能为空')
+    if (!proxy.host || !proxy.port) throw new Error('代理主机和端口不能为空')
+    const entries = await loadProxyLibrary()
+    const now = Date.now()
+    const index = entries.findIndex((item) => item.id === entry?.id)
+    const saved = {
+      id: index >= 0 ? entries[index].id : randomUUID(),
+      name,
+      proxy,
+      createdAt: index >= 0 ? entries[index].createdAt : now,
+      updatedAt: now
+    }
+    if (index >= 0) entries[index] = saved
+    else entries.push(saved)
+    await saveProxyLibrary(entries)
+    return saved
+  })
+  ipcMain.handle('proxy-library:delete', async (_e, id) => {
+    const entries = (await loadProxyLibrary()).filter((entry) => entry.id !== id)
+    await saveProxyLibrary(entries)
+    return true
+  })
+  ipcMain.handle('proxy-library:assign', async (_e, ids, entryId) => {
+    const [profiles, entries] = await Promise.all([loadProfiles(), loadProxyLibrary()])
+    const entry = entryId ? entries.find((item) => item.id === entryId) : null
+    if (entryId && !entry) throw new Error('代理库条目不存在')
+    const targetIds = new Set(Array.isArray(ids) ? ids : [])
+    let updated = 0
+    const next = profiles.map((profile) => {
+      if (!targetIds.has(profile.id)) return profile
+      const proxy = entry
+        ? normalizedLibraryProxy(entry.proxy)
+        : { enabled: false, type: 'http', host: '', port: '', username: '', password: '', useSystemProxy: true, ignoreTlsErrors: false }
+      updated += 1
+      return withProfileManifest(
+        {
+          ...profile,
+          proxy,
+          manifest: { ...(profile.manifest || {}), geo: null, proxyHealth: null },
+          updatedAt: Date.now()
+        },
+        { previousManifest: profile.manifest }
+      )
+    })
+    await saveProfiles(next)
+    return { updated }
+  })
+
   ipcMain.handle('profiles:launch', async (_e, id) => {
     const profile = (await loadProfiles()).find((p) => p.id === id)
     if (!profile) throw new Error('环境不存在')
+    if (runningIds().includes(id)) throw new Error('该环境已在运行中')
+    if (!confirmLaunchMemory(1)) throw new Error('可用内存不足，已取消启动')
     const settings = await loadSettings()
     const systemProxyUrl = await resolveSystemProxyUrl()
     const preflight = await preflightGeo(profile, new Map(), systemProxyUrl)
-    const targetProfile = showGeoConfirmation(preflight)
-    await saveProfileSnapshot(targetProfile)
-    const target = { ...targetProfile, startupUrl: targetProfile.startupUrl || settings.defaultStartupUrl }
+    if (preflight.geoError) await saveProfileSnapshot(preflight.profile)
+    const prepared = resolveSinglePreflight(preflight)
+    await saveProfileSnapshot(prepared.storedProfile)
+    const target = { ...prepared.runtimeProfile, startupUrl: prepared.runtimeProfile.startupUrl || settings.defaultStartupUrl }
     const result = await launch(
       target,
       settings.kernelPath,
       () => scheduleRunningNotify(),
       undefined,
-      { systemProxyUrl }
+      { systemProxyUrl, forceSystemProxy: prepared.forceSystemProxy }
     )
     notifyRunning()
     return result
@@ -661,26 +850,42 @@ function registerIpc() {
       .filter(Boolean)
       .filter((p) => !runningSet.has(p.id))
 
+    if (!confirmLaunchMemory(targets.length, '批量启动')) {
+      return targets.map((target) => ({ id: target.id, ok: false, error: '可用内存不足，已取消批量启动' }))
+    }
+
     const geoCache = new Map()
     const systemProxyUrl = await resolveSystemProxyUrl()
     const preflight = await Promise.all(
       targets.map((profile) => preflightGeo(profile, geoCache, systemProxyUrl))
     )
-    const blocked = preflight.filter((item) => item.validation.status === 'error')
-    const changes = preflight.filter((item) => item.confirmation?.required)
-    const geoFailures = preflight.filter((item) => item.geoError)
-    if (blocked.length || changes.length || geoFailures.length) {
+    for (const item of preflight) {
+      if (item.geoError) await saveProfileSnapshot(item.profile)
+    }
+    const blocked = preflight.filter((item) => {
+      const policy = normalizeStartupPolicy(item.profile.startupPolicy)
+      return item.validation.status === 'error' ||
+        (item.geoError && policy.proxyFailureAction === 'block') ||
+        (item.confirmation?.required && policy.ipChangeAction === 'block')
+    })
+    const pendingChanges = preflight.filter((item) =>
+      item.confirmation?.required && normalizeStartupPolicy(item.profile.startupPolicy).ipChangeAction === 'ask'
+    )
+    const pendingFallbacks = preflight.filter((item) =>
+      item.geoError && normalizeStartupPolicy(item.profile.startupPolicy).proxyFailureAction === 'ask'
+    )
+    if (pendingChanges.length || pendingFallbacks.length) {
       const choice = dialog.showMessageBoxSync(mainWindow, {
         type: 'warning',
-        buttons: ['取消批量启动', '应用地区并启动可验证环境'],
+        buttons: ['取消批量启动', '应用策略并继续'],
         defaultId: 0,
         cancelId: 0,
         title: '批量启动前需要确认',
-        message: `有 ${blocked.length + changes.length + geoFailures.length} 个环境需要处理`,
+        message: `有 ${pendingChanges.length + pendingFallbacks.length} 个环境需要确认`,
         detail: [
-          blocked.length ? `${blocked.length} 个环境存在硬错误，将跳过` : '',
-          changes.length ? `${changes.length} 个环境的出口画像需要确认` : '',
-          geoFailures.length ? `${geoFailures.length} 个环境无法完成 GeoIP 检测，将跳过` : ''
+          pendingChanges.length ? `${pendingChanges.length} 个环境将更新出口地区画像` : '',
+          pendingFallbacks.length ? `${pendingFallbacks.length} 个环境的指定代理不可用，将仅本次改用系统代理` : '',
+          blocked.length ? `${blocked.length} 个环境被一致性检查或启动策略阻止` : ''
         ].filter(Boolean).join('；')
       })
       if (choice !== 1) return targets.map((target) => ({ id: target.id, ok: false, error: '已取消批量启动' }))
@@ -690,21 +895,34 @@ function registerIpc() {
     const preflightById = new Map(preflight.map((item) => [item.profile.id, item]))
     for (const target of targets) {
       const item = preflightById.get(target.id)
-      if (item.validation.status === 'error' || item.geoError) continue
+      const policy = normalizeStartupPolicy(item.profile.startupPolicy)
+      await saveProfileSnapshot(item.profile)
+      if (item.validation.status === 'error') continue
+      if (item.geoError) {
+        if (policy.proxyFailureAction === 'block') continue
+        preparedTargets.push({
+          storedProfile: item.profile,
+          runtimeProfile: runtimeWithSystemProxy(item.profile),
+          forceSystemProxy: true
+        })
+        continue
+      }
+      if (item.confirmation?.required && policy.ipChangeAction === 'block') continue
       const next = item.confirmation?.required ? applyGeoToProfile(item.profile, item.geo) : item.profile
       await saveProfileSnapshot(next)
-      preparedTargets.push(next)
+      preparedTargets.push({ storedProfile: next, runtimeProfile: next, forceSystemProxy: false })
     }
 
     const bounds = tile ? computeGrid(preparedTargets.length) : []
-    const results = Array(targets.length).fill(null).map((_value, index) => ({ id: targets[index].id, ok: false, error: '未通过启动前检查' }))
+    const results = targets.map((target) => ({ id: target.id, ok: false, error: '未通过启动前检查或已被启动策略阻止' }))
     let nextIndex = 0
     const workerCount = Math.min(2, preparedTargets.length)
     const worker = async () => {
       while (true) {
         const i = nextIndex++
         if (i >= preparedTargets.length) return
-        const target = preparedTargets[i]
+        const prepared = preparedTargets[i]
+        const target = prepared.runtimeProfile
         const resultIndex = targets.findIndex((item) => item.id === target.id)
         try {
           await launch(
@@ -712,7 +930,7 @@ function registerIpc() {
             settings.kernelPath,
             () => scheduleRunningNotify(),
             tile ? bounds[i] : undefined,
-            { systemProxyUrl }
+            { systemProxyUrl, forceSystemProxy: prepared.forceSystemProxy }
           )
           results[resultIndex] = { id: target.id, ok: true }
         } catch (e) {

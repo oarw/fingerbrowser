@@ -146,3 +146,23 @@ test('disabled TLS verification is persisted as a non-blocking security warning'
   assert.equal(result.manifest.consistency.status, 'warning')
   assert.ok(result.manifest.consistency.issues.some((issue) => issue.code === 'TLS_VERIFICATION_DISABLED'))
 })
+
+test('proxy health is tied to the tested endpoint and resets after endpoint changes', () => {
+  const healthy = withProfileManifest(profile(), {
+    geo: geo(),
+    proxyHealth: {
+      status: 'available',
+      proxyIdentity: 'http://proxy.example:8080',
+      checkedAt: '2026-08-18T01:00:00.000Z'
+    }
+  })
+  assert.equal(healthy.manifest.proxyHealth.status, 'available')
+  assert.equal(healthy.manifest.proxyHealth.proxyIdentity, 'http://proxy.example:8080')
+
+  const changed = withProfileManifest({
+    ...healthy,
+    proxy: { ...healthy.proxy, host: 'dead.example' }
+  }, { previousManifest: healthy.manifest })
+  assert.equal(changed.manifest.proxyHealth.status, 'unknown')
+  assert.equal(changed.manifest.geo, null)
+})

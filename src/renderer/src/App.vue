@@ -2,8 +2,10 @@
 import { computed, onMounted, onUnmounted, ref } from 'vue'
 import {
   AlertTriangle,
+  BookmarkPlus,
   Check,
   CircleStop,
+  Copy,
   Cpu,
   Edit3,
   FolderCog,
@@ -18,12 +20,14 @@ import {
   RefreshCw,
   Search,
   Settings,
+  SquareStack,
   Trash2
 } from 'lucide-vue-next'
 import ProfileEditor from './components/ProfileEditor.vue'
 import SettingsModal from './components/SettingsModal.vue'
 import LogoMark from './components/LogoMark.vue'
 import QuickProxyDialog from './components/QuickProxyDialog.vue'
+import ProxyLibraryDialog from './components/ProxyLibraryDialog.vue'
 
 const profiles = ref([])
 const running = ref([])
@@ -43,6 +47,9 @@ const savedSidebarState = window.localStorage.getItem('fingerbrowser.sidebarColl
 const sidebarCollapsed = ref(savedSidebarState === null ? true : savedSidebarState === 'true')
 const quickProxyTarget = ref(null)
 const quickProxyAutoTest = ref(false)
+const templates = ref([])
+const proxyEntries = ref([])
+const proxyLibraryOpen = ref(false)
 const runningSet = computed(() => new Set(running.value))
 
 let unsub = null
@@ -51,16 +58,20 @@ onMounted(async () => {
   const startedAt = performance.now()
   try {
     unsub = window.api.onRunningChanged((ids) => (running.value = ids))
-    const [nextOptions, nextProfiles, nextRunning, nextKernelStatus] = await Promise.all([
+    const [nextOptions, nextProfiles, nextRunning, nextKernelStatus, nextTemplates, nextProxyEntries] = await Promise.all([
       window.api.fingerprintOptions(),
       window.api.listProfiles(),
       window.api.getRunning(),
-      window.api.getKernelStatus()
+      window.api.getKernelStatus(),
+      window.api.listTemplates(),
+      window.api.listProxyLibrary()
     ])
     options.value = nextOptions
     profiles.value = nextProfiles
     running.value = nextRunning
     kernelStatus.value = nextKernelStatus
+    templates.value = nextTemplates
+    proxyEntries.value = nextProxyEntries
     if (!nextKernelStatus.ready) activeView.value = 'settings'
   } catch (error) {
     console.error('应用初始化失败:', error)
@@ -126,10 +137,19 @@ function proxyLabel(profile) {
 }
 
 function regionLabel(profile) {
+  if (profile.proxy?.enabled && profile.manifest?.proxyHealth?.status === 'unavailable') return '代理不可用'
+  if (profile.proxy?.enabled && profile.manifest?.proxyHealth?.status === 'unknown') return '地区待检测'
   const geo = profile.manifest?.geo
   if (geo?.country || geo?.countryCode) return [geo.country || geo.countryCode, geo.ip].filter(Boolean).join(' · ')
   const timezone = profile.fingerprint?.timezone || ''
   return timezone.includes('/') ? timezone.split('/').at(-1).replaceAll('_', ' ') : timezone || '未指定'
+}
+
+function countryFlag(profile) {
+  if (!profile.proxy?.enabled || profile.manifest?.proxyHealth?.status !== 'available') return ''
+  const code = String(profile.manifest?.geo?.countryCode || '').toUpperCase()
+  if (!/^[A-Z]{2}$/.test(code)) return ''
+  return String.fromCodePoint(...[...code].map((letter) => 127397 + letter.charCodeAt(0)))
 }
 
 function openCreate() {
@@ -148,6 +168,33 @@ async function onSave(payload) {
   await refresh()
 }
 
+async function duplicateProfile(profile) {
+  await window.api.duplicateProfile(profile.id)
+  await refresh()
+}
+
+async function saveAsTemplate(profile) {
+  const name = window.prompt('模板名称', `${profile.name || '新环境'} 模板`)
+  if (!name?.trim()) return
+  await window.api.saveTemplate(name, profile)
+  templates.value = await window.api.listTemplates()
+}
+
+async function deleteTemplate(template) {
+  if (!window.confirm(`删除模板「${template.name}」？`)) return
+  await window.api.deleteTemplate(template.id)
+  templates.value = await window.api.listTemplates()
+}
+
+async function refreshProxyLibrary() {
+  proxyEntries.value = await window.api.listProxyLibrary()
+}
+
+async function proxiesAssigned() {
+  proxyLibraryOpen.value = false
+  await Promise.all([refresh(), refreshProxyLibrary()])
+}
+
 async function onDelete(profile) {
   if (isRunning(profile.id)) {
     alert('请先关闭该环境再删除')
@@ -164,6 +211,8 @@ async function launch(profile) {
   } catch (error) {
     alert(error.message || String(error))
     await refreshKernelStatus()
+  } finally {
+    await refresh()
   }
 }
 
@@ -199,6 +248,7 @@ async function batchLaunch(tile) {
     if (failures.length) alert(`部分环境启动失败:\n${failures.map((failure) => failure.error).join('\n')}`)
   } finally {
     batchBusy.value = false
+    await refresh()
   }
 }
 
@@ -297,8 +347,12 @@ async function settingsSaved(status) {
         v-if="activeView === 'editor'"
         :profile="editing"
         :options="options"
+        :templates="templates"
+        :proxy-entries="proxyEntries"
         @close="activeView = 'profiles'"
         @save="onSave"
+        @save-template="saveAsTemplate"
+        @delete-template="deleteTemplate"
       />
 
       <SettingsModal
@@ -315,6 +369,7 @@ async function settingsSaved(status) {
             <h1>浏览器环境</h1>
           </div>
           <div class="header-actions">
+            <button class="btn-secondary" title="管理代理库" @click="proxyLibraryOpen = true"><SquareStack :size="17" />代理库</button>
             <button class="icon-button" title="设置" aria-label="设置" @click="openSettings">
               <Settings :size="18" />
             </button>
@@ -356,6 +411,7 @@ async function settingsSaved(status) {
             <div class="toolbar-spacer"></div>
             <template v-if="selected.length">
               <span class="selection-count">已选 {{ selected.length }}</span>
+              <button class="btn-secondary" @click="proxyLibraryOpen = true"><SquareStack :size="15" />分配代理</button>
               <button class="btn-secondary" :disabled="batchBusy" @click="batchLaunch(false)">
                 <Play :size="15" />批量启动
               </button>
@@ -395,7 +451,7 @@ async function settingsSaved(status) {
                   <td>
                     <div class="network-cell">
                       <div class="network-summary">
-                        <span><Globe2 :size="14" />{{ regionLabel(profile) }}</span>
+                        <span><span v-if="countryFlag(profile)" class="country-flag" role="img" :aria-label="`${profile.manifest.geo.countryCode} 国旗`">{{ countryFlag(profile) }}</span><Globe2 v-else :size="14" />{{ regionLabel(profile) }}</span>
                         <small>{{ proxyLabel(profile) }}</small>
                       </div>
                       <div class="proxy-quick-actions">
@@ -433,6 +489,8 @@ async function settingsSaved(status) {
                     <div class="row-actions">
                       <button v-if="!isRunning(profile.id)" class="launch-button" @click="launch(profile)"><Play :size="15" />启动</button>
                       <button v-else class="stop-button" @click="stop(profile)"><CircleStop :size="15" />关闭</button>
+                      <button class="icon-button compact" title="复制环境" :aria-label="`复制 ${profile.name}`" @click="duplicateProfile(profile)"><Copy :size="16" /></button>
+                      <button class="icon-button compact" title="保存为模板" :aria-label="`将 ${profile.name} 保存为模板`" @click="saveAsTemplate(profile)"><BookmarkPlus :size="16" /></button>
                       <button class="icon-button compact" title="编辑环境" :aria-label="`编辑 ${profile.name}`" @click="openEdit(profile)"><Edit3 :size="16" /></button>
                       <button class="icon-button compact danger" title="删除环境" :aria-label="`删除 ${profile.name}`" @click="onDelete(profile)"><Trash2 :size="16" /></button>
                     </div>
@@ -475,6 +533,14 @@ async function settingsSaved(status) {
       :auto-test="quickProxyAutoTest"
       @close="quickProxyTarget = null; quickProxyAutoTest = false"
       @saved="proxySaved"
+    />
+
+    <ProxyLibraryDialog
+      v-if="proxyLibraryOpen"
+      :assign-ids="selected"
+      @close="proxyLibraryOpen = false"
+      @changed="refreshProxyLibrary"
+      @assigned="proxiesAssigned"
     />
   </div>
 </template>

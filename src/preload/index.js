@@ -3,6 +3,7 @@ import { contextBridge, ipcRenderer } from 'electron'
 const api = {
   listProfiles: () => ipcRenderer.invoke('profiles:list'),
   saveProfile: (profile) => ipcRenderer.invoke('profiles:save', profile),
+  duplicateProfile: (id) => ipcRenderer.invoke('profiles:duplicate', id),
   deleteProfile: (id) => ipcRenderer.invoke('profiles:delete', id),
   launchProfile: (id) => ipcRenderer.invoke('profiles:launch', id),
   launchBatch: (ids, tile) => ipcRenderer.invoke('profiles:launch-batch', ids, tile),
@@ -36,6 +37,14 @@ const api = {
   fingerprintOptions: () => ipcRenderer.invoke('fingerprint:options'),
   validateProfile: (profile) => ipcRenderer.invoke('profile:validate', profile),
   detectGeo: (proxy) => ipcRenderer.invoke('geo:detect', proxy),
+
+  listTemplates: () => ipcRenderer.invoke('templates:list'),
+  saveTemplate: (name, profile) => ipcRenderer.invoke('templates:save', name, profile),
+  deleteTemplate: (id) => ipcRenderer.invoke('templates:delete', id),
+  listProxyLibrary: () => ipcRenderer.invoke('proxy-library:list'),
+  saveProxyEntry: (entry) => ipcRenderer.invoke('proxy-library:save', entry),
+  deleteProxyEntry: (id) => ipcRenderer.invoke('proxy-library:delete', id),
+  assignProxyEntry: (ids, entryId) => ipcRenderer.invoke('proxy-library:assign', ids, entryId),
 
   pickKernel: () => ipcRenderer.invoke('dialog:pick-kernel'),
   pickKernelDirectory: () => ipcRenderer.invoke('dialog:pick-kernel-directory')

@@ -1,4 +1,6 @@
-export const PROFILE_MANIFEST_VERSION = 1
+import { normalizeStartupPolicy } from './launchPolicy.js'
+
+export const PROFILE_MANIFEST_VERSION = 2
 
 function clean(value) {
   return typeof value === 'string' ? value.trim() : ''
@@ -44,6 +46,19 @@ function normalizeGeo(geo) {
   }
 }
 
+function normalizeProxyHealth(health, geo, currentProxyIdentity) {
+  const inferredStatus = geo ? 'available' : 'unknown'
+  const status = ['unknown', 'available', 'unavailable'].includes(health?.status)
+    ? health.status
+    : inferredStatus
+  return {
+    status,
+    checkedAt: clean(health?.checkedAt),
+    error: status === 'unavailable' ? clean(health?.error) : '',
+    proxyIdentity: status === 'unknown' ? '' : clean(health?.proxyIdentity) || currentProxyIdentity
+  }
+}
+
 function normalizeProfile(profile) {
   const fingerprint = profile?.fingerprint || {}
   const proxy = profile?.proxy || {}
@@ -71,7 +86,8 @@ function normalizeProfile(profile) {
       password: typeof proxy.password === 'string' ? proxy.password : '',
       useSystemProxy: proxy.useSystemProxy !== false,
       ignoreTlsErrors: Boolean(proxy.ignoreTlsErrors)
-    }
+    },
+    startupPolicy: normalizeStartupPolicy(profile?.startupPolicy)
   }
 }
 
@@ -161,7 +177,15 @@ export function withProfileManifest(profile, options = {}) {
   const now = options.now || new Date().toISOString()
   const normalized = normalizeProfile(profile)
   const previous = options.previousManifest ?? profile?.manifest
-  const geo = normalizeGeo(options.geo ?? profile?.manifest?.geo ?? previous?.geo)
+  const hasOptionGeo = Object.prototype.hasOwnProperty.call(options, 'geo')
+  const hasProfileGeo = Object.prototype.hasOwnProperty.call(profile?.manifest || {}, 'geo')
+  const inheritedGeo = normalizeGeo(
+    hasOptionGeo ? options.geo : hasProfileGeo ? profile.manifest.geo : previous?.geo
+  )
+  const proxyChanged = Boolean(previous?.network?.proxyIdentity) &&
+    previous.network.proxyIdentity !== proxyIdentity(normalized.proxy)
+  const currentProxyIdentity = proxyIdentity(normalized.proxy)
+  const geoMatchesProxy = !proxyChanged || inheritedGeo?.proxyIdentity === currentProxyIdentity
   const fingerprint = {
     seed: normalized.fingerprint.seed,
     platform: normalized.fingerprint.platform,
@@ -180,6 +204,21 @@ export function withProfileManifest(profile, options = {}) {
     useSystemProxy: normalized.proxy.useSystemProxy,
     ignoreTlsErrors: normalized.proxy.ignoreTlsErrors
   }
+  const hasOptionHealth = Object.prototype.hasOwnProperty.call(options, 'proxyHealth')
+  const hasProfileHealth = Object.prototype.hasOwnProperty.call(profile?.manifest || {}, 'proxyHealth')
+  const inheritedHealth = hasOptionHealth
+    ? options.proxyHealth
+    : hasProfileHealth
+      ? profile.manifest.proxyHealth
+      : previous?.proxyHealth
+  const healthMatchesProxy = !proxyChanged || inheritedHealth?.proxyIdentity === currentProxyIdentity
+  const resetProxyState = proxyChanged && !geoMatchesProxy && !healthMatchesProxy
+  const geo = normalized.proxy.enabled && geoMatchesProxy ? inheritedGeo : null
+  const proxyHealth = normalizeProxyHealth(
+    resetProxyState ? null : inheritedHealth,
+    resetProxyState ? null : geo,
+    currentProxyIdentity
+  )
   const previousIdentity = previous
     ? identityOf(previous.fingerprint, previous.network, normalizeGeo(previous.geo))
     : ''
@@ -198,6 +237,7 @@ export function withProfileManifest(profile, options = {}) {
       fingerprint,
       network,
       geo,
+      proxyHealth,
       consistency: { ...consistency, checkedAt: now }
     }
   }
