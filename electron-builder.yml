@@ -1,5 +1,6 @@
 appId: com.fingerbrowser.app
 productName: FingerBrowser
+artifactName: ${productName}-${version}-${os}-${arch}.${ext}
 directories:
   output: release
   buildResources: build
