@@ -115,6 +115,7 @@ jobs:
           - The installer is not code-signed yet, so Windows SmartScreen may show an unknown publisher warning.
           - Profile manifest v1 records stable fingerprint, network, GeoIP, language, and timezone identity with pre-launch consistency checks.
           - Configured proxies can be chained after the Windows system proxy/V2Ray, with explicit HTTPS proxy certificate policy.
+          - HTTPS exit proxies addressed by IP now route correctly through the local system-proxy tunnel while preserving certificate validation.
           - GeoIP detection uses bounded multi-provider fallback instead of depending on one endpoint.
           - Proxy diagnostics now surface upstream CONNECT, authentication, and TLS failures instead of only bridge status codes.
           - Kernel downloads now use Electron's Chromium network stack so Windows system proxy settings are honored.
@@ -131,6 +132,9 @@ jobs:
           )
           if ($env:GITHUB_REF_NAME -match '-') {
             $releaseOptions += '--prerelease'
+            $releaseOptions += '--latest=false'
+          } else {
+            $releaseOptions += '--latest'
           }
 
           gh release create $env:GITHUB_REF_NAME @assets @releaseOptions

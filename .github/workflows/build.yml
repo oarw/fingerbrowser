@@ -40,6 +40,10 @@ jobs:
         shell: pwsh
         run: |
           $packageVersion = node -p "require('./package.json').version"
+          if ($packageVersion -notmatch '-pre\.\d+$') {
+            Write-Host "Stable version $packageVersion does not require an automatic prerelease"
+            exit 0
+          }
           $releaseVersion = (git tag --list | node scripts/next-prerelease.mjs $packageVersion).Trim()
           if (-not $releaseVersion) { throw 'Unable to determine the next prerelease version' }
           npm pkg set "version=$releaseVersion"
@@ -92,7 +96,10 @@ jobs:
   auto-release:
     name: Auto release
     needs: build-windows
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    if: >-
+      github.event_name == 'push' &&
+      github.ref == 'refs/heads/main' &&
+      needs.build-windows.outputs.release_tag != ''
     permissions:
       actions: read
       contents: write
