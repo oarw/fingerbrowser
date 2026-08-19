@@ -369,7 +369,7 @@ async function settingsSaved(status) {
             <h1>浏览器环境</h1>
           </div>
           <div class="header-actions">
-            <button class="btn-secondary" title="管理代理库" @click="proxyLibraryOpen = true"><SquareStack :size="17" />代理库</button>
+            <button class="btn-secondary" data-smoke="proxy-library" title="管理代理库" @click="proxyLibraryOpen = true"><SquareStack :size="17" />代理库</button>
             <button class="icon-button" title="设置" aria-label="设置" @click="openSettings">
               <Settings :size="18" />
             </button>

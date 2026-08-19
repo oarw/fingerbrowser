@@ -312,6 +312,15 @@ function createWindow() {
           throw new Error(`profile workspace rendered ${profileRows} rows; expected ${SMOKE_PROFILES.length}`)
         }
         await capture(screenshotPath)
+        await click('proxy-library')
+        await wait(200)
+        const proxyLibraryReady = await mainWindow.webContents.executeJavaScript(
+          `Boolean(document.querySelector('[data-smoke="proxy-library-dialog"]'))`
+        )
+        if (!proxyLibraryReady) throw new Error('proxy library did not render')
+        await capture(join(parsed.dir, `${parsed.name}-proxy-library${parsed.ext}`))
+        await click('proxy-library-close')
+        await wait(100)
         await click('quick-proxy-edit')
         await wait(200)
         const quickProxyReady = await mainWindow.webContents.executeJavaScript(

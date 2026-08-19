@@ -151,13 +151,13 @@ async function assign(entryId) {
 
 <template>
   <div class="overlay" @click.self="emit('close')">
-    <div class="dialog proxy-library-dialog" role="dialog" aria-modal="true" aria-labelledby="proxy-library-title">
+    <div class="dialog proxy-library-dialog" data-smoke="proxy-library-dialog" role="dialog" aria-modal="true" aria-labelledby="proxy-library-title">
       <header class="quick-proxy-header">
         <div>
           <p class="eyebrow">{{ hasTargets ? `分配到 ${assignIds.length} 个环境` : '可复用网络端点' }}</p>
           <h2 id="proxy-library-title">代理库</h2>
         </div>
-        <button class="icon-button compact" type="button" title="关闭" aria-label="关闭" @click="emit('close')"><X :size="17" /></button>
+        <button class="icon-button compact" data-smoke="proxy-library-close" type="button" title="关闭" aria-label="关闭" @click="emit('close')"><X :size="17" /></button>
       </header>
 
       <div class="proxy-library-layout">
