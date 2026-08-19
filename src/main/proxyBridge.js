@@ -1,4 +1,6 @@
 import https from 'node:https'
+import { isIP } from 'node:net'
+import { checkServerIdentity } from 'node:tls'
 
 // Chromium 只连接 127.0.0.1 上的匿名 HTTP 代理。桥接层负责代理认证、SOCKS5、
 // HTTPS 上游证书策略，以及“系统代理 -> 指定出口代理”的串联。
@@ -104,14 +106,26 @@ async function createSystemRelay(systemProxyUrl) {
   return server
 }
 
-function localLookup(address) {
-  return (_hostname, options, callback) => {
-    if (typeof options === 'function') {
-      callback = options
-      options = {}
-    }
-    if (options?.all) callback(null, [{ address, family: 4 }])
-    else callback(null, address, 4)
+function normalizeTlsHost(host) {
+  const value = String(host || '').trim()
+  return value.startsWith('[') && value.endsWith(']') ? value.slice(1, -1) : value
+}
+
+function createHttpsTunnelAgent(proxy) {
+  const tlsHost = normalizeTlsHost(proxy?.host)
+  return new https.Agent({
+    keepAlive: true,
+    // The URL points at the local TCP tunnel. Keep TLS identity bound to the real proxy.
+    servername: isIP(tlsHost) ? '' : tlsHost,
+    checkServerIdentity: (_hostname, certificate) => checkServerIdentity(tlsHost, certificate),
+    rejectUnauthorized: !proxy?.ignoreTlsErrors
+  })
+}
+
+export function createHttpsTunnelOptions(proxy, tunnelPort) {
+  return {
+    upstreamProxyUrl: buildUpstreamUrl(proxy, { host: '127.0.0.1', port: tunnelPort }),
+    httpsAgent: createHttpsTunnelAgent(proxy)
   }
 }
 
@@ -162,13 +176,9 @@ export async function startBridge(key, proxy, options = {}) {
       const tunnelPort = resource.tunnel.slice(resource.tunnel.lastIndexOf(':') + 1)
 
       if (proxy.type === 'https') {
-        // 保留原始主机名用于 TLS SNI 和证书校验，但把 TCP 连接解析到本地隧道。
-        upstreamProxyUrl = buildUpstreamUrl(proxy, { host: proxy.host, port: tunnelPort })
-        resource.httpsAgent = new https.Agent({
-          keepAlive: true,
-          lookup: localLookup('127.0.0.1'),
-          rejectUnauthorized: !proxy.ignoreTlsErrors
-        })
+        const tunnelOptions = createHttpsTunnelOptions(proxy, tunnelPort)
+        upstreamProxyUrl = tunnelOptions.upstreamProxyUrl
+        resource.httpsAgent = tunnelOptions.httpsAgent
       } else {
         upstreamProxyUrl = buildUpstreamUrl(proxy, { host: '127.0.0.1', port: tunnelPort })
       }
