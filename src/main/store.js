@@ -6,6 +6,8 @@ import { join } from 'node:path'
 const dataDir = app.getPath('userData')
 const profilesFile = join(dataDir, 'profiles.json')
 const settingsFile = join(dataDir, 'settings.json')
+const templatesFile = join(dataDir, 'templates.json')
+const proxyLibraryFile = join(dataDir, 'proxy-library.json')
 
 // 每个环境的独立浏览器数据目录(物理隔离 cookie/缓存/存储)
 export const profilesRoot = join(dataDir, 'profiles')
@@ -40,6 +42,28 @@ export function loadProfiles() {
 export function saveProfiles(profiles) {
   profilesCache = Promise.resolve(profiles)
   return writeJson(profilesFile, profiles)
+}
+
+let templatesCache = readJson(templatesFile, [])
+
+export function loadTemplates() {
+  return templatesCache
+}
+
+export function saveTemplates(templates) {
+  templatesCache = Promise.resolve(templates)
+  return writeJson(templatesFile, templates)
+}
+
+let proxyLibraryCache = readJson(proxyLibraryFile, [])
+
+export function loadProxyLibrary() {
+  return proxyLibraryCache
+}
+
+export function saveProxyLibrary(entries) {
+  proxyLibraryCache = Promise.resolve(entries)
+  return writeJson(proxyLibraryFile, entries)
 }
 
 const DEFAULT_SETTINGS = {

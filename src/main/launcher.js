@@ -119,7 +119,9 @@ export async function launch(profile, kernelPath, onExit, windowBounds, networkO
 
     // 认证、SOCKS5、HTTPS 或系统代理串联统一走本地桥接。
     let proxyServerUrl = ''
-    if (needsBridge(profile.proxy)) {
+    if (networkOptions.forceSystemProxy && networkOptions.systemProxyUrl) {
+      proxyServerUrl = networkOptions.systemProxyUrl
+    } else if (needsBridge(profile.proxy)) {
       proxyServerUrl = await startBridge(profile.id, profile.proxy, networkOptions)
     }
 

@@ -24,6 +24,7 @@ const saving = ref(false)
 const feedback = reactive({ status: '', title: '', detail: '' })
 const testedGeo = ref(null)
 const testedKey = ref('')
+const testedHealth = ref(null)
 const dialogElement = ref(null)
 
 const proxyKey = computed(() => [
@@ -40,6 +41,7 @@ const proxyKey = computed(() => [
 watch(proxyKey, (next) => {
   if (testedKey.value && testedKey.value !== next) {
     testedGeo.value = null
+    testedHealth.value = null
     feedback.status = ''
     feedback.title = ''
     feedback.detail = ''
@@ -97,6 +99,11 @@ function normalizedProxy() {
   }
 }
 
+function currentProxyIdentity() {
+  const proxy = normalizedProxy()
+  return `${proxy.type}://${proxy.host.toLowerCase()}:${proxy.port}`
+}
+
 function validateProxy({ requireEnabled = false } = {}) {
   if (requireEnabled && !form.enabled) return '请先启用代理'
   if (form.enabled && (!form.host.trim() || !form.port.trim())) return '启用代理后必须填写主机和端口'
@@ -116,6 +123,12 @@ async function testProxy() {
     const geo = await window.api.detectGeo(normalizedProxy())
     testedGeo.value = geo
     testedKey.value = proxyKey.value
+    testedHealth.value = {
+      status: 'available',
+      checkedAt: new Date().toISOString(),
+      error: '',
+      proxyIdentity: currentProxyIdentity()
+    }
     const location = [geo.country || geo.countryCode, geo.timezone].filter(Boolean).join(' · ')
     const route = geo.systemProxy ? '系统代理 → 指定代理' : '指定代理直连'
     Object.assign(feedback, {
@@ -125,7 +138,13 @@ async function testProxy() {
     })
   } catch (error) {
     testedGeo.value = null
-    testedKey.value = ''
+    testedKey.value = proxyKey.value
+    testedHealth.value = {
+      status: 'unavailable',
+      checkedAt: new Date().toISOString(),
+      error: error.message || String(error),
+      proxyIdentity: currentProxyIdentity()
+    }
     Object.assign(feedback, {
       status: 'error',
       title: '代理测试失败',
@@ -146,8 +165,12 @@ async function save() {
   saving.value = true
   try {
     const next = { ...props.profile, proxy: normalizedProxy() }
-    if (testedGeo.value && testedKey.value === proxyKey.value) {
-      next.manifest = { ...(props.profile.manifest || {}), geo: testedGeo.value }
+    if (testedKey.value === proxyKey.value && testedHealth.value) {
+      next.manifest = {
+        ...(props.profile.manifest || {}),
+        ...(testedGeo.value ? { geo: testedGeo.value } : {}),
+        proxyHealth: testedHealth.value
+      }
     }
     const saved = await window.api.saveProfile(next)
     emit('saved', saved)
