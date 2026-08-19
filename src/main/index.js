@@ -311,6 +311,19 @@ function createWindow() {
         if (profileRows !== SMOKE_PROFILES.length) {
           throw new Error(`profile workspace rendered ${profileRows} rows; expected ${SMOKE_PROFILES.length}`)
         }
+        const countryFlagStyle = await mainWindow.webContents.executeJavaScript(`(() => {
+          const flag = document.createElement('span')
+          flag.className = 'country-flag'
+          flag.textContent = String.fromCodePoint(0x1f1fa, 0x1f1f8)
+          document.body.append(flag)
+          const style = getComputedStyle(flag)
+          const result = { fontFamily: style.fontFamily, emojiVariant: style.fontVariantEmoji }
+          flag.remove()
+          return result
+        })()`)
+        if (!countryFlagStyle.fontFamily.includes('Segoe UI Emoji') || countryFlagStyle.emojiVariant !== 'emoji') {
+          throw new Error(`country flag emoji font is not configured: ${JSON.stringify(countryFlagStyle)}`)
+        }
         await click('table-layout-auto')
         await wait(50)
         await capture(screenshotPath)

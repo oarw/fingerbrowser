@@ -1936,7 +1936,9 @@ body.column-resizing {
   display: inline-block;
   min-width: 18px;
   margin-right: 3px;
+  font-family: 'Segoe UI Emoji', 'Apple Color Emoji', 'Noto Color Emoji', sans-serif;
   font-size: 16px;
+  font-variant-emoji: emoji;
   line-height: 1;
   text-align: center;
 }
