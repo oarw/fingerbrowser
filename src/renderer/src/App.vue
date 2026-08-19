@@ -11,8 +11,11 @@ import {
   LayoutGrid,
   ListFilter,
   NotebookPen,
+  PanelLeftClose,
+  PanelLeftOpen,
   Play,
   Plus,
+  RefreshCw,
   Search,
   Settings,
   Trash2
@@ -20,6 +23,7 @@ import {
 import ProfileEditor from './components/ProfileEditor.vue'
 import SettingsModal from './components/SettingsModal.vue'
 import LogoMark from './components/LogoMark.vue'
+import QuickProxyDialog from './components/QuickProxyDialog.vue'
 
 const profiles = ref([])
 const running = ref([])
@@ -35,6 +39,10 @@ const batchBusy = ref(false)
 const remarkTarget = ref(null)
 const remarkDraft = ref('')
 const launching = ref(true)
+const savedSidebarState = window.localStorage.getItem('fingerbrowser.sidebarCollapsed')
+const sidebarCollapsed = ref(savedSidebarState === null ? true : savedSidebarState === 'true')
+const quickProxyTarget = ref(null)
+const quickProxyAutoTest = ref(false)
 const runningSet = computed(() => new Set(running.value))
 
 let unsub = null
@@ -113,10 +121,13 @@ function tagsOf(profile) {
 function proxyLabel(profile) {
   if (!profile.proxy?.enabled) return '本机网络'
   const route = profile.proxy.useSystemProxy !== false ? '系统 → ' : ''
-  return `${route}${profile.proxy.type?.toUpperCase() || 'HTTP'} · ${profile.proxy.host || '未配置'}`
+  const endpoint = [profile.proxy.host || '未配置', profile.proxy.port].filter(Boolean).join(':')
+  return `${route}${profile.proxy.type?.toUpperCase() || 'HTTP'} · ${endpoint}`
 }
 
 function regionLabel(profile) {
+  const geo = profile.manifest?.geo
+  if (geo?.country || geo?.countryCode) return [geo.country || geo.countryCode, geo.ip].filter(Boolean).join(' · ')
   const timezone = profile.fingerprint?.timezone || ''
   return timezone.includes('/') ? timezone.split('/').at(-1).replaceAll('_', ' ') : timezone || '未指定'
 }
@@ -206,6 +217,22 @@ function openSettings() {
   activeView.value = 'settings'
 }
 
+function toggleSidebar() {
+  sidebarCollapsed.value = !sidebarCollapsed.value
+  window.localStorage.setItem('fingerbrowser.sidebarCollapsed', String(sidebarCollapsed.value))
+}
+
+function openQuickProxy(profile, autoTest = false) {
+  quickProxyTarget.value = profile
+  quickProxyAutoTest.value = autoTest
+}
+
+async function proxySaved() {
+  quickProxyTarget.value = null
+  quickProxyAutoTest.value = false
+  await refresh()
+}
+
 async function settingsSaved(status) {
   if (status) kernelStatus.value = status
   else await refreshKernelStatus()
@@ -213,7 +240,7 @@ async function settingsSaved(status) {
 </script>
 
 <template>
-  <div class="app-shell">
+  <div class="app-shell" :class="{ 'sidebar-collapsed': sidebarCollapsed }">
     <Transition name="launch-screen">
       <div v-if="launching" class="launch-screen" aria-label="FingerBrowser 正在启动">
         <div class="launch-identity">
@@ -231,12 +258,24 @@ async function settingsSaved(status) {
         <span class="brand-name">FingerBrowser</span>
       </div>
 
+      <button
+        class="sidebar-toggle"
+        data-smoke="sidebar-toggle"
+        :title="sidebarCollapsed ? '展开侧边栏' : '收起侧边栏'"
+        :aria-label="sidebarCollapsed ? '展开侧边栏' : '收起侧边栏'"
+        :aria-expanded="!sidebarCollapsed"
+        @click="toggleSidebar"
+      >
+        <PanelLeftOpen v-if="sidebarCollapsed" :size="15" />
+        <PanelLeftClose v-else :size="15" />
+      </button>
+
       <nav class="primary-nav" aria-label="主导航">
-        <button data-smoke="profiles" :class="{ active: activeView === 'profiles' || activeView === 'editor' }" @click="activeView = 'profiles'">
+        <button data-smoke="profiles" title="环境管理" :class="{ active: activeView === 'profiles' || activeView === 'editor' }" @click="activeView = 'profiles'">
           <LayoutGrid :size="18" />
           <span>环境管理</span>
         </button>
-        <button data-smoke="settings" :class="{ active: activeView === 'settings' }" @click="openSettings">
+        <button data-smoke="settings" title="内核与设置" :class="{ active: activeView === 'settings' }" @click="openSettings">
           <FolderCog :size="18" />
           <span>内核与设置</span>
         </button>
@@ -355,8 +394,26 @@ async function settingsSaved(status) {
                   </td>
                   <td>
                     <div class="network-cell">
-                      <span><Globe2 :size="14" />{{ regionLabel(profile) }}</span>
-                      <small>{{ proxyLabel(profile) }}</small>
+                      <div class="network-summary">
+                        <span><Globe2 :size="14" />{{ regionLabel(profile) }}</span>
+                        <small>{{ proxyLabel(profile) }}</small>
+                      </div>
+                      <div class="proxy-quick-actions">
+                        <button
+                          class="network-action"
+                          :disabled="!profile.proxy?.enabled"
+                          :title="profile.proxy?.enabled ? '测试代理 IP' : '启用代理后可测试'"
+                          :aria-label="`测试 ${profile.name} 的代理 IP`"
+                          @click="openQuickProxy(profile, true)"
+                        ><RefreshCw :size="14" /></button>
+                        <button
+                          class="network-action"
+                          data-smoke="quick-proxy-edit"
+                          title="快速编辑代理"
+                          :aria-label="`快速编辑 ${profile.name} 的代理`"
+                          @click="openQuickProxy(profile)"
+                        ><Edit3 :size="14" /></button>
+                      </div>
                     </div>
                   </td>
                   <td>
@@ -411,5 +468,13 @@ async function settingsSaved(status) {
         </footer>
       </div>
     </div>
+
+    <QuickProxyDialog
+      v-if="quickProxyTarget"
+      :profile="quickProxyTarget"
+      :auto-test="quickProxyAutoTest"
+      @close="quickProxyTarget = null; quickProxyAutoTest = false"
+      @saved="proxySaved"
+    />
   </div>
 </template>

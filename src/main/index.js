@@ -272,6 +272,27 @@ function createWindow() {
 
         await click('profiles')
         await wait(500)
+        const sidebarStartedCollapsed = await mainWindow.webContents.executeJavaScript(
+          `document.querySelector('.app-shell')?.classList.contains('sidebar-collapsed')`
+        )
+        if (sidebarStartedCollapsed) {
+          await click('sidebar-toggle')
+          await wait(250)
+        }
+        const sidebarExpandedWidth = await mainWindow.webContents.executeJavaScript(
+          `document.querySelector('.sidebar')?.getBoundingClientRect().width`
+        )
+        await click('sidebar-toggle')
+        await wait(250)
+        const sidebarCollapsedWidth = await mainWindow.webContents.executeJavaScript(
+          `document.querySelector('.sidebar')?.getBoundingClientRect().width`
+        )
+        if (!(sidebarExpandedWidth > sidebarCollapsedWidth && sidebarCollapsedWidth <= 73)) {
+          throw new Error(`sidebar did not collapse: ${sidebarExpandedWidth} -> ${sidebarCollapsedWidth}`)
+        }
+        await capture(join(parsed.dir, `${parsed.name}-sidebar-collapsed${parsed.ext}`))
+        await click('sidebar-toggle')
+        await wait(250)
         const profileRows = await mainWindow.webContents.executeJavaScript(
           `document.querySelectorAll('.profile-table tbody tr').length`
         )
@@ -279,6 +300,15 @@ function createWindow() {
           throw new Error(`profile workspace rendered ${profileRows} rows; expected ${SMOKE_PROFILES.length}`)
         }
         await capture(screenshotPath)
+        await click('quick-proxy-edit')
+        await wait(200)
+        const quickProxyReady = await mainWindow.webContents.executeJavaScript(
+          `Boolean(document.querySelector('[data-smoke="quick-proxy-dialog"]') && document.querySelector('[data-smoke="quick-proxy-test"]'))`
+        )
+        if (!quickProxyReady) throw new Error('quick proxy editor did not render')
+        await capture(join(parsed.dir, `${parsed.name}-quick-proxy${parsed.ext}`))
+        await click('quick-proxy-close')
+        await wait(100)
         await click('settings')
         await wait(500)
         const kernelDirectoryConfigured = await mainWindow.webContents.executeJavaScript(
@@ -290,6 +320,37 @@ function createWindow() {
         )
         if (!backgroundSettingVisible) throw new Error('background setting was not rendered')
         await capture(join(parsed.dir, `${parsed.name}-settings${parsed.ext}`))
+        const settingsBottomLayout = await mainWindow.webContents.executeJavaScript(`(() => {
+          const scroller = document.querySelector('.settings-content')
+          const shell = document.querySelector('.app-shell')
+          const sidebar = document.querySelector('.sidebar')
+          if (!scroller || !shell || !sidebar) return null
+          scroller.scrollTop = scroller.scrollHeight
+          const viewportHeight = document.documentElement.clientHeight
+          return {
+            rootScrollTop: document.scrollingElement.scrollTop,
+            shellBottom: Math.round(shell.getBoundingClientRect().bottom),
+            sidebarBottom: Math.round(sidebar.getBoundingClientRect().bottom),
+            scrollerBottom: Math.round(scroller.getBoundingClientRect().bottom),
+            viewportHeight,
+            toggleCopyBackground: getComputedStyle(document.querySelector('.toggle-copy')).backgroundColor
+          }
+        })()`)
+        if (
+          !settingsBottomLayout ||
+          settingsBottomLayout.rootScrollTop !== 0 ||
+          Math.abs(settingsBottomLayout.shellBottom - settingsBottomLayout.viewportHeight) > 1 ||
+          Math.abs(settingsBottomLayout.sidebarBottom - settingsBottomLayout.viewportHeight) > 1 ||
+          Math.abs(settingsBottomLayout.scrollerBottom - settingsBottomLayout.viewportHeight) > 1 ||
+          settingsBottomLayout.toggleCopyBackground !== 'rgba(0, 0, 0, 0)'
+        ) {
+          throw new Error(`settings bottom layout escaped viewport: ${JSON.stringify(settingsBottomLayout)}`)
+        }
+        await wait(100)
+        await capture(join(parsed.dir, `${parsed.name}-settings-bottom${parsed.ext}`))
+        await mainWindow.webContents.executeJavaScript(
+          `document.querySelector('.settings-content').scrollTop = 0`
+        )
         await click('kernel-log')
         await wait(300)
         const installLogVisible = await mainWindow.webContents.executeJavaScript(
@@ -310,6 +371,29 @@ function createWindow() {
         )
         if (!consistencyVisible) throw new Error('profile consistency summary was not rendered')
         await capture(join(parsed.dir, `${parsed.name}-editor${parsed.ext}`))
+        const editorBottomLayout = await mainWindow.webContents.executeJavaScript(`(() => {
+          const scroller = document.querySelector('.editor-content')
+          const sidebar = document.querySelector('.sidebar')
+          if (!scroller || !sidebar) return null
+          scroller.scrollTop = scroller.scrollHeight
+          const viewportHeight = document.documentElement.clientHeight
+          return {
+            rootScrollTop: document.scrollingElement.scrollTop,
+            sidebarBottom: Math.round(sidebar.getBoundingClientRect().bottom),
+            scrollerBottom: Math.round(scroller.getBoundingClientRect().bottom),
+            viewportHeight
+          }
+        })()`)
+        if (
+          !editorBottomLayout ||
+          editorBottomLayout.rootScrollTop !== 0 ||
+          Math.abs(editorBottomLayout.sidebarBottom - editorBottomLayout.viewportHeight) > 1 ||
+          Math.abs(editorBottomLayout.scrollerBottom - editorBottomLayout.viewportHeight) > 1
+        ) {
+          throw new Error(`editor bottom layout escaped viewport: ${JSON.stringify(editorBottomLayout)}`)
+        }
+        await wait(100)
+        await capture(join(parsed.dir, `${parsed.name}-editor-bottom${parsed.ext}`))
         app.exit(0)
       } catch (error) {
         console.error('Electron smoke capture failed:', error)
