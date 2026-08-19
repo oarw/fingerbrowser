@@ -698,7 +698,7 @@ label {
 
 .profile-table.is-auto {
   min-width: 0;
-  table-layout: auto;
+  table-layout: fixed;
 }
 
 .profile-table.is-manual {

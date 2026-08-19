@@ -546,7 +546,7 @@ async function settingsSaved(status) {
               :class="`is-${tableLayoutMode}`"
               :style="profileTableStyle"
             >
-              <colgroup>
+              <colgroup v-if="tableLayoutMode === 'manual'">
                 <col v-for="column in tableColumns" :key="column.key" :style="tableColumnStyle(column)" />
               </colgroup>
               <thead>
