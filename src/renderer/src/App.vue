@@ -5,6 +5,7 @@ import {
   BookmarkPlus,
   Check,
   CircleStop,
+  Columns3,
   Copy,
   Cpu,
   Edit3,
@@ -12,6 +13,7 @@ import {
   Globe2,
   LayoutGrid,
   ListFilter,
+  MoveHorizontal,
   NotebookPen,
   PanelLeftClose,
   PanelLeftOpen,
@@ -52,7 +54,47 @@ const proxyEntries = ref([])
 const proxyLibraryOpen = ref(false)
 const runningSet = computed(() => new Set(running.value))
 
+const TABLE_LAYOUT_KEY = 'fingerbrowser.tableLayoutMode'
+const TABLE_WIDTHS_KEY = 'fingerbrowser.tableColumnWidths'
+const tableColumns = Object.freeze([
+  { key: 'selection', label: '选择', width: 42, min: 38 },
+  { key: 'number', label: '编号', width: 72, min: 56 },
+  { key: 'identity', label: '环境名称', width: 190, min: 140 },
+  { key: 'network', label: '网络与地区', width: 340, min: 240 },
+  { key: 'remark', label: '备注', width: 170, min: 110 },
+  { key: 'tags', label: '标签 / 分组', width: 150, min: 100 },
+  { key: 'actions', label: '操作', width: 218, min: 196 }
+])
+
+function loadTableWidths() {
+  const defaults = Object.fromEntries(tableColumns.map((column) => [column.key, column.width]))
+  try {
+    const saved = JSON.parse(window.localStorage.getItem(TABLE_WIDTHS_KEY) || '{}')
+    for (const column of tableColumns) {
+      const width = Number(saved[column.key])
+      if (Number.isFinite(width)) defaults[column.key] = Math.max(column.min, Math.min(width, 720))
+    }
+  } catch {
+    // Ignore invalid persisted layout data and restore the balanced defaults.
+  }
+  return defaults
+}
+
+const savedTableLayout = window.localStorage.getItem(TABLE_LAYOUT_KEY)
+const tableLayoutMode = ref(savedTableLayout === 'manual' ? 'manual' : 'auto')
+const tableColumnWidths = ref(loadTableWidths())
+const profileTableStyle = computed(() => {
+  if (tableLayoutMode.value !== 'manual') return undefined
+  const width = tableColumns.reduce((total, column) => total + tableColumnWidths.value[column.key], 0)
+  return {
+    width: `${width}px`,
+    minWidth: `${width}px`,
+    '--action-column-width': `${tableColumnWidths.value.actions}px`
+  }
+})
+
 let unsub = null
+let stopColumnResize = null
 
 onMounted(async () => {
   const startedAt = performance.now()
@@ -83,7 +125,66 @@ onMounted(async () => {
 
 onUnmounted(() => {
   if (unsub) unsub()
+  if (stopColumnResize) stopColumnResize()
 })
+
+function setTableLayoutMode(mode) {
+  tableLayoutMode.value = mode
+  window.localStorage.setItem(TABLE_LAYOUT_KEY, mode)
+}
+
+function tableColumnStyle(column) {
+  if (tableLayoutMode.value !== 'manual') return undefined
+  return { width: `${tableColumnWidths.value[column.key]}px` }
+}
+
+function saveTableWidths() {
+  window.localStorage.setItem(TABLE_WIDTHS_KEY, JSON.stringify(tableColumnWidths.value))
+}
+
+function resizeColumnBy(column, delta) {
+  const nextWidth = Math.max(column.min, Math.min(tableColumnWidths.value[column.key] + delta, 720))
+  tableColumnWidths.value = { ...tableColumnWidths.value, [column.key]: nextWidth }
+  saveTableWidths()
+}
+
+function resetColumnWidth(column) {
+  tableColumnWidths.value = { ...tableColumnWidths.value, [column.key]: column.width }
+  saveTableWidths()
+}
+
+function onColumnResizeKeydown(event, column) {
+  if (!['ArrowLeft', 'ArrowRight'].includes(event.key)) return
+  event.preventDefault()
+  resizeColumnBy(column, event.key === 'ArrowLeft' ? -12 : 12)
+}
+
+function startColumnResize(event, column, direction = 1) {
+  if (tableLayoutMode.value !== 'manual') return
+  event.preventDefault()
+
+  const startX = event.clientX
+  const startWidth = tableColumnWidths.value[column.key]
+  const onPointerMove = (moveEvent) => {
+    const width = Math.max(column.min, Math.min(startWidth + (moveEvent.clientX - startX) * direction, 720))
+    tableColumnWidths.value = { ...tableColumnWidths.value, [column.key]: width }
+  }
+  const finish = () => {
+    window.removeEventListener('pointermove', onPointerMove)
+    window.removeEventListener('pointerup', finish)
+    window.removeEventListener('pointercancel', finish)
+    document.body.classList.remove('column-resizing')
+    saveTableWidths()
+    stopColumnResize = null
+  }
+
+  if (stopColumnResize) stopColumnResize()
+  stopColumnResize = finish
+  document.body.classList.add('column-resizing')
+  window.addEventListener('pointermove', onPointerMove)
+  window.addEventListener('pointerup', finish)
+  window.addEventListener('pointercancel', finish)
+}
 
 async function refresh() {
   profiles.value = await window.api.listProfiles()
@@ -408,6 +509,24 @@ async function settingsSaved(status) {
                 <option v-for="group in groups" :key="group" :value="group">{{ group }}</option>
               </select>
             </div>
+            <div class="table-layout-switch" role="group" aria-label="表格列宽模式">
+              <button
+                type="button"
+                data-smoke="table-layout-auto"
+                title="根据窗口宽度自动分配列宽"
+                :class="{ active: tableLayoutMode === 'auto' }"
+                :aria-pressed="tableLayoutMode === 'auto'"
+                @click="setTableLayoutMode('auto')"
+              ><Columns3 :size="15" />自适应</button>
+              <button
+                type="button"
+                data-smoke="table-layout-manual"
+                title="显示全部列并自由拖动表头调整列宽"
+                :class="{ active: tableLayoutMode === 'manual' }"
+                :aria-pressed="tableLayoutMode === 'manual'"
+                @click="setTableLayoutMode('manual')"
+              ><MoveHorizontal :size="15" />自由拖动</button>
+            </div>
             <div class="toolbar-spacer"></div>
             <template v-if="selected.length">
               <span class="selection-count">已选 {{ selected.length }}</span>
@@ -422,18 +541,56 @@ async function settingsSaved(status) {
           </div>
 
           <div class="profile-table-wrap">
-            <table class="profile-table">
+            <table
+              class="profile-table"
+              :class="`is-${tableLayoutMode}`"
+              :style="profileTableStyle"
+            >
+              <colgroup>
+                <col v-for="column in tableColumns" :key="column.key" :style="tableColumnStyle(column)" />
+              </colgroup>
               <thead>
                 <tr>
                   <th class="check-column">
                     <input type="checkbox" :checked="allVisibleSelected" aria-label="选择当前列表" @change="toggleAllVisible" />
+                    <button
+                      v-if="tableLayoutMode === 'manual'"
+                      type="button"
+                      class="column-resize-handle"
+                      title="拖动调整选择列宽，双击恢复默认宽度"
+                      aria-label="调整选择列宽"
+                      @pointerdown="startColumnResize($event, tableColumns[0])"
+                      @dblclick="resetColumnWidth(tableColumns[0])"
+                      @keydown="onColumnResizeKeydown($event, tableColumns[0])"
+                    ></button>
                   </th>
-                  <th>编号</th>
-                  <th>环境名称</th>
-                  <th>网络与地区</th>
-                  <th>备注</th>
-                  <th>标签 / 分组</th>
-                  <th class="action-column">操作</th>
+                  <th v-for="column in tableColumns.slice(1, -1)" :key="column.key">
+                    {{ column.label }}
+                    <button
+                      v-if="tableLayoutMode === 'manual'"
+                      type="button"
+                      class="column-resize-handle"
+                      :data-smoke="column.key === 'network' ? 'network-column-resize' : undefined"
+                      :title="`拖动调整${column.label}列宽，双击恢复默认宽度`"
+                      :aria-label="`调整${column.label}列宽`"
+                      @pointerdown="startColumnResize($event, column)"
+                      @dblclick="resetColumnWidth(column)"
+                      @keydown="onColumnResizeKeydown($event, column)"
+                    ></button>
+                  </th>
+                  <th class="action-column">
+                    操作
+                    <button
+                      v-if="tableLayoutMode === 'manual'"
+                      type="button"
+                      class="column-resize-handle column-resize-handle-start"
+                      title="拖动调整操作列宽，双击恢复默认宽度"
+                      aria-label="调整操作列宽"
+                      @pointerdown="startColumnResize($event, tableColumns.at(-1), -1)"
+                      @dblclick="resetColumnWidth(tableColumns.at(-1))"
+                      @keydown="onColumnResizeKeydown($event, tableColumns.at(-1))"
+                    ></button>
+                  </th>
                 </tr>
               </thead>
               <tbody v-if="filtered.length">
